@@ -41,3 +41,14 @@ CREATE TABLE IF NOT EXISTS ct_meta (
 
 CREATE INDEX IF NOT EXISTS idx_ct_batches_published ON ct_batches (published, id);
 CREATE INDEX IF NOT EXISTS idx_ct_leaves_batch ON ct_leaves (batch_id);
+
+-- Trusted-caller stamp keys (hashes only; see migrations/0001_stamp_keys.sql).
+CREATE TABLE IF NOT EXISTS stamp_keys (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_stamp_keys_hash ON stamp_keys (key_hash);
