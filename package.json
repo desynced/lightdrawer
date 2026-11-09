@@ -1,0 +1,22 @@
+{
+  "name": "lightdrawer-receipts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prove this file existed, unchanged, at this time — and let anyone check it without trusting us. One receipt ZIP (OpenTimestamps + FreeTSA + certificate-log stamp + optional Rekor) and a single-file offline verifier. Files are hashed in 4 MB chunks.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node test/run.mjs",
+    "test:live": "node scripts/build.mjs && node test/run.mjs --live",
+    "dev": "node scripts/build.mjs && wrangler dev",
+    "check": "node scripts/build.mjs && wrangler deploy --dry-run --outdir build/dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261104.1": true
+  }
+}

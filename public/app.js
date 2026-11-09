@@ -1,0 +1,1890 @@
+'use strict';
+/* ---- 00-util.js ---- */
+/* LightDrawer receipt core: shared helpers. Plain script (no modules) so the
+   offline verifier can inline everything into one HTML file. */
+'use strict';
+const LD_VERSION = '0.1.0';
+const _te = new TextEncoder();
+const _td = new TextDecoder('utf-8', { fatal: false });
+function utf8(s) { return _te.encode(s); }
+function utf8dec(b) { return _td.decode(b); }
+function toHex(b) { return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''); }
+function fromHex(h) {
+  h = h.trim().toLowerCase();
+  if (h.length % 2 || /[^0-9a-f]/.test(h)) throw new Error('bad hex');
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
+}
+function toB64(b) { let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(s) { const bin = atob(s.replace(/\s+/g, '')); const o = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i); return o; }
+function concat(...arrs) { let n = 0; for (const a of arrs) n += a.length; const o = new Uint8Array(n); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; }
+function bytesEq(a, b) { if (!a || !b || a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+async function digest(alg, data) { return new Uint8Array(await crypto.subtle.digest(alg, data)); }
+const sha256 = (d) => digest('SHA-256', d);
+const sha1 = (d) => digest('SHA-1', d);
+function pemToDer(pem) { return fromB64(pem.replace(/-----(BEGIN|END)[^-]+-----/g, '').replace(/\s+/g, '')); }
+function derToPem(der, label) { const b = toB64(der).replace(/(.{64})/g, '$1\n'); return `-----BEGIN ${label}-----\n${b.trim()}\n-----END ${label}-----\n`; }
+function escHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+/* check record used by every verifier step: status = pass | fail | warn | info | skip */
+function chk(id, status, title, detail) { return { id, status, title, detail: detail || '' }; }
+
+/* ---- 10-der.js ---- */
+/* Minimal DER (ASN.1) reader/writer: enough for RFC 3161 and X.509. */
+function derRead(buf, pos = 0) {
+  const start = pos;
+  const b0 = buf[pos++];
+  if (b0 === undefined) throw new Error('DER: truncated');
+  const cls = b0 >> 6, constructed = !!(b0 & 0x20);
+  let tagNum = b0 & 0x1f;
+  if (tagNum === 0x1f) { tagNum = 0; let c; do { c = buf[pos++]; tagNum = (tagNum << 7) | (c & 0x7f); } while (c & 0x80); }
+  let len = buf[pos++];
+  if (len & 0x80) { const n = len & 0x7f; if (n === 0 || n > 4) throw new Error('DER: bad length'); len = 0; for (let i = 0; i < n; i++) len = len * 256 + buf[pos++]; }
+  const cs = pos, end = pos + len;
+  if (end > buf.length) throw new Error('DER: length past end');
+  const node = { tag: b0, cls, constructed, tagNum, start, cs, end, raw: buf.subarray(start, end), content: buf.subarray(cs, end) };
+  if (constructed) { node.children = []; let p = cs; while (p < end) { const c = derRead(buf, p); node.children.push(c); p = c.end; } }
+  return node;
+}
+function derParse(bytes) { const n = derRead(bytes, 0); return n; }
+function derOid(node) {
+  const c = node.content; const parts = [];
+  const first = c[0]; parts.push(Math.floor(first / 40) > 2 ? 2 : Math.floor(first / 40)); parts.push(first - parts[0] * 40);
+  let v = 0n;
+  for (let i = 1; i < c.length; i++) { v = (v << 7n) | BigInt(c[i] & 0x7f); if (!(c[i] & 0x80)) { parts.push(v.toString()); v = 0n; } }
+  return parts.join('.');
+}
+function derInt(node) { let v = 0n; for (const x of node.content) v = (v << 8n) | BigInt(x); if (node.content[0] & 0x80) v -= 1n << BigInt(node.content.length * 8); return v; }
+function derTime(node) {
+  const s = utf8dec(node.content);
+  let m;
+  if (node.tagNum === 23) { m = /^(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)Z$/.exec(s); if (!m) throw new Error('bad UTCTime'); const y = +m[1] < 50 ? 2000 + +m[1] : 1900 + +m[1]; return new Date(Date.UTC(y, m[2] - 1, m[3], m[4], m[5], m[6])); }
+  m = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(?:\.(\d+))?Z$/.exec(s); if (!m) throw new Error('bad GeneralizedTime ' + s);
+  const ms = m[7] ? Math.round(+('0.' + m[7]) * 1000) : 0;
+  return new Date(Date.UTC(m[1], m[2] - 1, m[3], m[4], m[5], m[6], ms));
+}
+function derStr(node) { return utf8dec(node.content); }
+/* encoders */
+function derLen(n) { if (n < 0x80) return Uint8Array.of(n); const b = []; while (n > 0) { b.unshift(n & 0xff); n = Math.floor(n / 256); } return Uint8Array.of(0x80 | b.length, ...b); }
+function derEnc(tag, content) { return concat(Uint8Array.of(tag), derLen(content.length), content); }
+function derSeq(...items) { return derEnc(0x30, concat(...items)); }
+function derNull() { return Uint8Array.of(5, 0); }
+function derOctets(b) { return derEnc(0x04, b); }
+function derBool(v) { return Uint8Array.of(1, 1, v ? 0xff : 0); }
+function derIntBytes(b) { let i = 0; while (i < b.length - 1 && b[i] === 0) i++; b = b.subarray(i); if (b[0] & 0x80) b = concat(Uint8Array.of(0), b); return derEnc(0x02, b); }
+function derOidEnc(str) {
+  const p = str.split('.').map((x) => BigInt(x)); const out = [Number(p[0] * 40n + p[1])];
+  for (let i = 2; i < p.length; i++) { let v = p[i]; const t = [Number(v & 0x7fn)]; v >>= 7n; while (v > 0n) { t.unshift(Number(v & 0x7fn) | 0x80); v >>= 7n; } out.push(...t); }
+  return derEnc(0x06, Uint8Array.from(out));
+}
+const OID = {
+  sha1: '1.3.14.3.2.26', sha256: '2.16.840.1.101.3.4.2.1', sha384: '2.16.840.1.101.3.4.2.2', sha512: '2.16.840.1.101.3.4.2.3',
+  rsaEncryption: '1.2.840.113549.1.1.1', sha256WithRSA: '1.2.840.113549.1.1.11', sha384WithRSA: '1.2.840.113549.1.1.12', sha512WithRSA: '1.2.840.113549.1.1.13',
+  ecPublicKey: '1.2.840.10045.2.1', p256: '1.2.840.10045.3.1.7', p384: '1.3.132.0.34', p521: '1.3.132.0.35',
+  ecdsaSha256: '1.2.840.10045.4.3.2', ecdsaSha384: '1.2.840.10045.4.3.3', ecdsaSha512: '1.2.840.10045.4.3.4',
+  signedData: '1.2.840.113549.1.7.2', tstInfo: '1.2.840.113549.1.9.16.1.4', contentType: '1.2.840.113549.1.9.3', messageDigest: '1.2.840.113549.1.9.4',
+  signingCertificate: '1.2.840.113549.1.9.16.2.12', signingCertificateV2: '1.2.840.113549.1.9.16.2.47',
+};
+const HASH_BY_OID = { [OID.sha1]: 'SHA-1', [OID.sha256]: 'SHA-256', [OID.sha384]: 'SHA-384', [OID.sha512]: 'SHA-512' };
+
+/* ---- 20-x509.js ---- */
+/* X.509 parsing and signature checks with WebCrypto. */
+const NAME_OIDS = { '2.5.4.3': 'CN', '2.5.4.10': 'O', '2.5.4.11': 'OU', '2.5.4.6': 'C', '2.5.4.7': 'L', '2.5.4.8': 'ST', '1.2.840.113549.1.9.1': 'emailAddress', '2.5.4.13': 'description' };
+function x509Name(node) {
+  const parts = [];
+  for (const set of node.children || []) for (const atv of set.children || []) { const k = NAME_OIDS[derOid(atv.children[0])] || derOid(atv.children[0]); parts.push(`${k}=${derStr(atv.children[1])}`); }
+  return parts.join(', ');
+}
+function x509Parse(der) {
+  const cert = derParse(der);
+  const [tbs, sigAlg, sigVal] = cert.children;
+  let i = 0; const t = tbs.children;
+  if (t[0].tag === 0xa0) i++; // version
+  const serial = t[i++], tbsSigAlg = t[i++], issuer = t[i++], validity = t[i++], subject = t[i++], spki = t[i++];
+  const spkiAlg = spki.children[0];
+  return {
+    der, tbsRaw: tbs.raw, serialHex: toHex(serial.content), sigAlgOid: derOid(sigAlg.children[0]), sigValue: sigVal.content.subarray(1),
+    issuer: x509Name(issuer), subject: x509Name(subject), issuerRaw: issuer.raw, subjectRaw: subject.raw,
+    notBefore: derTime(validity.children[0]), notAfter: derTime(validity.children[1]),
+    spkiRaw: spki.raw, keyAlgOid: derOid(spkiAlg.children[0]), curveOid: spkiAlg.children[1] && spkiAlg.children[1].tag === 0x06 ? derOid(spkiAlg.children[1]) : null,
+  };
+}
+function ecdsaDerToRaw(sig, size) {
+  const n = derParse(sig); const out = new Uint8Array(size * 2);
+  [0, 1].forEach((k) => { let v = n.children[k].content; while (v.length > size && v[0] === 0) v = v.subarray(1); if (v.length > size) throw new Error('ECDSA int too long'); out.set(v, size * (k + 1) - v.length); });
+  return out;
+}
+const CURVES = { [OID.p256]: ['P-256', 32], [OID.p384]: ['P-384', 48], [OID.p521]: ['P-521', 66] };
+/* Verify `sig` over `data` with SubjectPublicKeyInfo `spkiRaw`. sigAlgOid may be an
+   explicit sig alg (ecdsa-with-SHAxxx, shaxxxWithRSA) or rsaEncryption + hashName. */
+async function verifyWithSpki(spkiRaw, keyAlgOid, curveOid, sigAlgOid, hashName, sig, data) {
+  const map = { [OID.ecdsaSha256]: 'SHA-256', [OID.ecdsaSha384]: 'SHA-384', [OID.ecdsaSha512]: 'SHA-512', [OID.sha256WithRSA]: 'SHA-256', [OID.sha384WithRSA]: 'SHA-384', [OID.sha512WithRSA]: 'SHA-512' };
+  const hash = map[sigAlgOid] || hashName;
+  if (!hash) throw new Error('unsupported signature algorithm ' + sigAlgOid);
+  if (keyAlgOid === OID.ecPublicKey) {
+    const c = CURVES[curveOid]; if (!c) throw new Error('unsupported curve ' + curveOid);
+    const key = await crypto.subtle.importKey('spki', spkiRaw, { name: 'ECDSA', namedCurve: c[0] }, false, ['verify']);
+    return crypto.subtle.verify({ name: 'ECDSA', hash }, key, ecdsaDerToRaw(sig, c[1]), data);
+  }
+  if (keyAlgOid === OID.rsaEncryption) {
+    const key = await crypto.subtle.importKey('spki', spkiRaw, { name: 'RSASSA-PKCS1-v1_5', hash }, false, ['verify']);
+    return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, sig, data);
+  }
+  throw new Error('unsupported key algorithm ' + keyAlgOid);
+}
+async function x509VerifyIssuedBy(cert, issuer) {
+  return verifyWithSpki(issuer.spkiRaw, issuer.keyAlgOid, issuer.curveOid, cert.sigAlgOid, null, cert.sigValue, cert.tbsRaw);
+}
+
+/* Extensions and SANs. Re-parses the cert so existing x509Parse callers stay unchanged. */
+function x509Extensions(cert) {
+  const tbs = derParse(cert.der).children[0];
+  const out = [];
+  for (const n of tbs.children) {
+    if (n.tag !== 0xa3) continue;
+    const seq = n.children[0];
+    for (const ext of seq.children) {
+      const oid = derOid(ext.children[0]);
+      let i = 1, critical = false;
+      if (ext.children[i] && ext.children[i].tag === 0x01) { critical = ext.children[i].content[0] !== 0; i++; }
+      out.push({ oid, critical, value: ext.children[i].content });
+    }
+  }
+  return out;
+}
+function x509SANs(cert) {
+  const ext = x509Extensions(cert).find((e) => e.oid === '2.5.29.17');
+  if (!ext) return [];
+  const names = [];
+  const seq = derParse(ext.value);
+  for (const n of seq.children || []) {
+    if (n.cls === 2 && n.tagNum === 2) names.push(utf8dec(n.content)); // dNSName [2]
+  }
+  return names;
+}
+function x509SctListBytes(cert) {
+  const ext = x509Extensions(cert).find((e) => e.oid === '1.3.6.1.4.1.11129.2.4.2');
+  return ext ? ext.value : null;
+}
+
+/* ---- 30-tsa.js ---- */
+/* RFC 3161 trusted timestamp: build a request, verify a response offline. */
+function tsaBuildRequest(digestBytes) {
+  const nonce = crypto.getRandomValues(new Uint8Array(8)); nonce[0] &= 0x7f; if (nonce[0] === 0) nonce[0] = 1;
+  const tsq = derSeq(
+    derIntBytes(Uint8Array.of(1)),
+    derSeq(derSeq(derOidEnc(OID.sha256), derNull()), derOctets(digestBytes)),
+    derIntBytes(nonce),
+    derBool(true), // certReq: ask the TSA to embed its certificate
+  );
+  return { tsq, nonceHex: toHex(nonce) };
+}
+function tsaParseResponse(tsr) {
+  const resp = derParse(tsr);
+  const status = Number(derInt(resp.children[0].children[0]));
+  const out = { status, granted: status === 0 || status === 1 };
+  if (!resp.children[1]) return out;
+  const ci = resp.children[1];
+  if (derOid(ci.children[0]) !== OID.signedData) throw new Error('token is not CMS SignedData');
+  const sd = ci.children[1].children[0];
+  let k = 1; const digestAlgs = sd.children[k++]; const encap = sd.children[k++];
+  let certs = [];
+  if (sd.children[k] && sd.children[k].tag === 0xa0) { certs = sd.children[k].children.map((c) => c.raw); k++; }
+  if (sd.children[k] && sd.children[k].tag === 0xa1) k++;
+  const signerInfos = sd.children[k];
+  if (derOid(encap.children[0]) !== OID.tstInfo) throw new Error('encapsulated content is not TSTInfo');
+  const eContent = encap.children[1].children[0].content;
+  const tst = derParse(eContent).children;
+  let j = 0; j++; // version
+  const policy = derOid(tst[j++]);
+  const mi = tst[j++];
+  const imprintAlg = derOid(mi.children[0].children[0]);
+  const imprint = mi.children[1].content;
+  const serial = derInt(tst[j++]);
+  const genTime = derTime(tst[j++]);
+  let nonce = null, tsaName = null;
+  for (; j < tst.length; j++) {
+    const n = tst[j];
+    if (n.tag === 0x02) nonce = derInt(n);
+    else if (n.tag === 0xa0) { try { tsaName = x509Name(n.children[0].children[0]); } catch (e) { /* ignore */ } }
+  }
+  const si = signerInfos.children[0].children;
+  let s = 1; const sid = si[s++]; const digestAlgOid = derOid(si[s++].children[0]);
+  let signedAttrs = null; if (si[s].tag === 0xa0) signedAttrs = si[s++];
+  const sigAlgOid = derOid(si[s++].children[0]);
+  const signature = si[s++].content;
+  const attrs = {};
+  if (signedAttrs) for (const a of signedAttrs.children) attrs[derOid(a.children[0])] = a.children[1].children[0];
+  let sidSerialHex = null; if (sid.tag === 0x30) sidSerialHex = toHex(sid.children[1].content).replace(/^00/, '');
+  return Object.assign(out, { policy, imprintAlg, imprint, serial, genTime, nonce, tsaName, certs, eContent, digestAlgOid, signedAttrs, attrs, sigAlgOid, signature, sidSerialHex });
+}
+/* trust = { rootPem, rootSha256, tsaCertPem? }. Returns { checks, genTime }. */
+async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
+  const checks = [];
+  let p;
+  try { p = tsaParseResponse(tsr); } catch (e) { return { checks: [chk('tsa.parse', 'fail', 'RFC 3161 token could not be read', e.message)] }; }
+  if (!p.granted) return { checks: [chk('tsa.status', 'fail', 'TSA did not grant the timestamp', 'status ' + p.status)] };
+  checks.push(chk('tsa.imprint', p.imprintAlg === OID.sha256 && bytesEq(p.imprint, expectedDigest) ? 'pass' : 'fail',
+    'RFC 3161 token covers this statement hash', 'token imprint ' + toHex(p.imprint)));
+  if (expectedNonceHex) checks.push(chk('tsa.nonce', p.nonce !== null && p.nonce === BigInt('0x' + expectedNonceHex) ? 'pass' : 'warn', 'Nonce matches the request', ''));
+  // signed attributes bind the TSTInfo
+  const hashName = HASH_BY_OID[p.digestAlgOid];
+  const md = p.attrs[OID.messageDigest];
+  const mdOk = md && hashName && bytesEq(md.content, await digest(hashName, p.eContent));
+  checks.push(chk('tsa.messageDigest', mdOk ? 'pass' : 'fail', 'Signed attributes match the timestamp content', hashName || p.digestAlgOid));
+  // find signer cert
+  const root = x509Parse(pemToDer(trust.rootPem));
+  const rootFp = toHex(await sha256(root.der));
+  checks.push(chk('tsa.rootPin', rootFp === trust.rootSha256 ? 'pass' : 'fail', 'Bundled TSA root matches pinned fingerprint', rootFp));
+  const candidates = p.certs.map((d) => x509Parse(d));
+  if (trust.tsaCertPem) candidates.push(x509Parse(pemToDer(trust.tsaCertPem)));
+  const signedAttrsDer = p.signedAttrs ? concat(Uint8Array.of(0x31), p.signedAttrs.raw.subarray(1)) : p.eContent;
+  let signer = null;
+  for (const c of candidates) {
+    if (bytesEq(c.der, root.der)) continue;
+    try { if (await verifyWithSpki(c.spkiRaw, c.keyAlgOid, c.curveOid, p.sigAlgOid, hashName, p.signature, signedAttrsDer)) { signer = c; break; } } catch (e) { /* try next */ }
+  }
+  checks.push(chk('tsa.signature', signer ? 'pass' : 'fail', 'TSA signature is valid', signer ? signer.subject : 'no certificate verified the signature'));
+  if (signer) {
+    if (p.sidSerialHex) checks.push(chk('tsa.sid', signer.serialHex.replace(/^00/, '') === p.sidSerialHex ? 'pass' : 'warn', 'Signer identifier matches certificate', ''));
+    const ess = p.attrs[OID.signingCertificateV2] || p.attrs[OID.signingCertificate];
+    if (ess) {
+      try {
+        const id = ess.children[0].children[0];
+        let alg = 'SHA-1', hashNode = id.children[0];
+        if (p.attrs[OID.signingCertificateV2]) { if (id.children[0].tag === 0x30) { alg = HASH_BY_OID[derOid(id.children[0].children[0])]; hashNode = id.children[1]; } else alg = 'SHA-256'; }
+        checks.push(chk('tsa.ess', bytesEq(hashNode.content, await digest(alg, signer.der)) ? 'pass' : 'fail', 'Signed attributes name this signing certificate', ''));
+      } catch (e) { checks.push(chk('tsa.ess', 'warn', 'Signing-certificate attribute unreadable', e.message)); }
+    }
+    let chainOk = false; try { chainOk = await x509VerifyIssuedBy(signer, root); } catch (e) { /* */ }
+    checks.push(chk('tsa.chain', chainOk ? 'pass' : 'fail', 'TSA certificate chains to the pinned root', root.subject));
+    const inValidity = p.genTime >= signer.notBefore && p.genTime <= signer.notAfter;
+    checks.push(chk('tsa.validity', inValidity ? 'pass' : 'fail', 'Timestamp falls inside the TSA certificate validity', `${signer.notBefore.toISOString()} – ${signer.notAfter.toISOString()}`));
+  }
+  checks.push(chk('tsa.time', 'info', 'TSA time (UTC)', p.genTime.toISOString()));
+  checks.push(chk('tsa.revocation', 'info', 'Not checked offline: certificate revocation (CRL/OCSP)', 'Run openssl with -crl_check online if you need this.'));
+  return { checks, genTime: p.genTime, serial: p.serial.toString() };
+}
+
+/* ---- 40-ots.js ---- */
+/* OpenTimestamps: build, parse, serialize, upgrade, and check .ots proofs.
+   Format reference: python-opentimestamps (core/serialize.py, timestamp.py, op.py). */
+const OTS_MAGIC = Uint8Array.from([0x00, 0x4f, 0x70, 0x65, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x73, 0x00, 0x00, 0x50, 0x72, 0x6f, 0x6f, 0x66, 0x00, 0xbf, 0x89, 0xe2, 0xe8, 0x84, 0xe8, 0x92, 0x94]);
+const OTS_PENDING = '83dfe30d2ef90c8e', OTS_BITCOIN = '0588960d73d71901', OTS_LITECOIN = '06869a0d73d71b45', OTS_ETHEREUM = '30fe8087b5c7ead7';
+const OTS_OPS = { 0x08: 'sha256', 0x02: 'sha1', 0x03: 'ripemd160', 0x67: 'keccak256', 0xf0: 'append', 0xf1: 'prepend', 0xf2: 'reverse', 0xf3: 'hexlify' };
+const OTS_DEFAULT_CALENDARS = ['https://a.pool.opentimestamps.org', 'https://b.pool.opentimestamps.org', 'https://a.pool.eternitywall.com'];
+class OtsReader {
+  constructor(b) { this.b = b; this.p = 0; }
+  byte() { if (this.p >= this.b.length) throw new Error('OTS: truncated'); return this.b[this.p++]; }
+  bytes(n) { if (this.p + n > this.b.length) throw new Error('OTS: truncated'); const r = this.b.subarray(this.p, this.p + n); this.p += n; return r; }
+  varuint() { let v = 0, s = 0, c; do { c = this.byte(); v += (c & 0x7f) * 2 ** s; s += 7; } while (c & 0x80); return v; }
+  varbytes(max = 8192) { const n = this.varuint(); if (n > max) throw new Error('OTS: varbytes too long'); return this.bytes(n); }
+}
+function otsVaruint(n) { const o = []; do { let c = n % 128; n = Math.floor(n / 128); if (n) c |= 0x80; o.push(c); } while (n); return Uint8Array.from(o); }
+function otsVarbytes(b) { return concat(otsVaruint(b.length), b); }
+async function otsApply(op, arg, msg) {
+  switch (op) {
+    case 0x08: return sha256(msg);
+    case 0x02: return sha1(msg);
+    case 0x03: return ripemd160(msg);
+    case 0xf0: return concat(msg, arg);
+    case 0xf1: return concat(arg, msg);
+    case 0xf2: return Uint8Array.from(msg).reverse();
+    case 0xf3: return utf8(toHex(msg));
+    default: throw new Error('OTS op not supported here: ' + (OTS_OPS[op] || op.toString(16)));
+  }
+}
+/* node = { msg, atts: [{tag, payload}], ops: [{op, arg, node}] } */
+async function otsReadTimestamp(r, msg, depth = 0) {
+  if (depth > 256) throw new Error('OTS: too deep');
+  const node = { msg, atts: [], ops: [] };
+  const item = async (tag) => {
+    if (tag === 0x00) { const t = toHex(r.bytes(8)); node.atts.push({ tag: t, payload: r.varbytes() }); }
+    else {
+      if (!OTS_OPS[tag]) throw new Error('OTS: unknown op 0x' + tag.toString(16));
+      const arg = tag === 0xf0 || tag === 0xf1 ? r.varbytes(4096) : null;
+      const next = await otsApply(tag, arg, msg);
+      node.ops.push({ op: tag, arg, node: await otsReadTimestamp(r, next, depth + 1) });
+    }
+  };
+  let tag = r.byte();
+  while (tag === 0xff) { await item(r.byte()); tag = r.byte(); }
+  await item(tag);
+  return node;
+}
+function otsWriteTimestamp(node) {
+  const items = [];
+  const atts = node.atts.slice().sort((a, b) => (a.tag + toHex(a.payload)).localeCompare(b.tag + toHex(b.payload)));
+  for (const a of atts) items.push(concat(Uint8Array.of(0), fromHex(a.tag), otsVarbytes(a.payload)));
+  for (const o of node.ops) items.push(concat(Uint8Array.of(o.op), o.arg ? otsVarbytes(o.arg) : new Uint8Array(0), otsWriteTimestamp(o.node)));
+  const out = []; items.forEach((it, i) => { if (i < items.length - 1) out.push(Uint8Array.of(0xff)); out.push(it); });
+  return concat(...out);
+}
+async function otsParseDetached(bytes) {
+  const r = new OtsReader(bytes);
+  if (!bytesEq(r.bytes(OTS_MAGIC.length), OTS_MAGIC)) throw new Error('not an OpenTimestamps proof (bad magic)');
+  const ver = r.varuint(); if (ver !== 1) throw new Error('unsupported .ots version ' + ver);
+  const hashOp = r.byte(); if (hashOp !== 0x08) throw new Error('only SHA-256 detached proofs are supported, got ' + (OTS_OPS[hashOp] || hashOp));
+  const d = Uint8Array.from(r.bytes(32));
+  const root = await otsReadTimestamp(r, d);
+  if (r.p !== bytes.length) throw new Error('OTS: trailing bytes');
+  return { digest: d, root };
+}
+function otsSerializeDetached(digestBytes, root) { return concat(OTS_MAGIC, otsVaruint(1), Uint8Array.of(0x08), digestBytes, otsWriteTimestamp(root)); }
+function otsMerge(into, from) {
+  for (const a of from.atts) if (!into.atts.some((x) => x.tag === a.tag && bytesEq(x.payload, a.payload))) into.atts.push(a);
+  for (const o of from.ops) {
+    const ex = into.ops.find((x) => x.op === o.op && bytesEq(x.arg || new Uint8Array(0), o.arg || new Uint8Array(0)));
+    if (ex) otsMerge(ex.node, o.node); else into.ops.push(o);
+  }
+}
+/* Parse a calendar response (a timestamp that starts at `msg`). */
+async function otsParseCalendarResponse(bytes, msg) { const r = new OtsReader(bytes); const n = await otsReadTimestamp(r, msg); return n; }
+function otsWalk(node, fn, path = []) { fn(node, path); for (const o of node.ops) otsWalk(o.node, fn, path.concat(o)); }
+function otsAttestations(root) {
+  const out = [];
+  otsWalk(root, (n) => { for (const a of n.atts) {
+    const r = new OtsReader(a.payload); let info;
+    if (a.tag === OTS_PENDING) info = { kind: 'pending', uri: utf8dec(r.varbytes(1000)) };
+    else if (a.tag === OTS_BITCOIN) info = { kind: 'bitcoin', height: r.varuint() };
+    else if (a.tag === OTS_LITECOIN) info = { kind: 'litecoin', height: r.varuint() };
+    else if (a.tag === OTS_ETHEREUM) info = { kind: 'ethereum', height: r.varuint() };
+    else info = { kind: 'unknown', tag: a.tag };
+    out.push(Object.assign(info, { msg: n.msg, node: n, att: a }));
+  } });
+  return out;
+}
+function otsCalendarAllowed(uri) { return /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(uri) && /(opentimestamps\.org|eternitywall\.com|catallaxy\.com)$/i.test(new URL(uri).hostname); }
+/* Upgrade pending attestations. fetchUpgrade(calendarUri, commitmentHex) -> Uint8Array|null */
+async function otsUpgrade(root, fetchUpgrade) {
+  const report = [];
+  for (const a of otsAttestations(root).filter((x) => x.kind === 'pending')) {
+    if (!otsCalendarAllowed(a.uri)) { report.push({ uri: a.uri, status: 'refused (calendar not on allowlist)' }); continue; }
+    try {
+      const resp = await fetchUpgrade(a.uri, toHex(a.msg));
+      if (!resp) { report.push({ uri: a.uri, status: 'still pending' }); continue; }
+      const sub = await otsParseCalendarResponse(resp, a.msg);
+      const complete = otsAttestations(sub).some((x) => x.kind === 'bitcoin');
+      otsMerge(a.node, sub);
+      if (complete) a.node.atts = a.node.atts.filter((x) => x !== a.att);
+      report.push({ uri: a.uri, status: complete ? 'upgraded: Bitcoin attestation added' : 'calendar answered, not yet in Bitcoin' });
+    } catch (e) { report.push({ uri: a.uri, status: 'error: ' + e.message }); }
+  }
+  return report;
+}
+/* Verify. lookupBlock(height) -> { merkleRootHex (RPC/display byte order), time } or null when offline. */
+async function otsVerify(otsBytes, expectedDigest, lookupBlock) {
+  const checks = [];
+  let p;
+  try { p = await otsParseDetached(otsBytes); } catch (e) { return { checks: [chk('ots.parse', 'fail', 'OpenTimestamps proof could not be read', e.message)] }; }
+  checks.push(chk('ots.digest', bytesEq(p.digest, expectedDigest) ? 'pass' : 'fail', 'OpenTimestamps proof is for this statement hash', toHex(p.digest)));
+  const atts = otsAttestations(p.root);
+  const pend = atts.filter((a) => a.kind === 'pending'), btc = atts.filter((a) => a.kind === 'bitcoin');
+  let earliest = null;
+  for (const a of btc) {
+    if (!lookupBlock) { checks.push(chk('ots.btc.' + a.height, 'info', `Claims Bitcoin block ${a.height}`, 'Not checked offline. Enable online checks, or run: ots verify statement.json.ots')); continue; }
+    try {
+      const blk = await lookupBlock(a.height);
+      const ok = blk && toHex(Uint8Array.from(a.msg).reverse()) === blk.merkleRootHex;
+      checks.push(chk('ots.btc.' + a.height, ok ? 'pass' : 'fail', `Bitcoin block ${a.height} commits to this hash`, blk ? `block time ${new Date(blk.time * 1000).toISOString()} (explorer: ${blk.source})` : 'block not found'));
+      if (ok && (!earliest || blk.time < earliest.time)) earliest = { height: a.height, time: blk.time };
+    } catch (e) { checks.push(chk('ots.btc.' + a.height, 'warn', `Could not look up Bitcoin block ${a.height}`, e.message)); }
+  }
+  if (!btc.length) checks.push(chk('ots.pending', pend.length ? 'warn' : 'fail', pend.length ? 'OpenTimestamps proof is still pending (not yet in Bitcoin)' : 'No attestations in OpenTimestamps proof',
+    pend.length ? `Calendars: ${pend.map((a) => a.uri).join(', ')}. Usually confirms in ~1–6 hours; then upgrade the proof.` : ''));
+  else if (pend.length) checks.push(chk('ots.pendingOther', 'info', 'Some calendar branches are still pending', pend.map((a) => a.uri).join(', ')));
+  return { checks, earliest, pending: pend.map((a) => a.uri), bitcoinHeights: btc.map((a) => a.height), parsed: p };
+}
+/* Block lookup using public Esplora APIs (CORS-enabled). Two explorers must agree when both answer. */
+async function otsEsploraLookup(height, fetchFn = fetch) {
+  const bases = ['https://blockstream.info/api', 'https://mempool.space/api'];
+  const results = [];
+  for (const base of bases) {
+    try {
+      const h = (await (await fetchFn(`${base}/block-height/${height}`)).text()).trim();
+      if (!/^[0-9a-f]{64}$/.test(h)) continue;
+      const j = await (await fetchFn(`${base}/block/${h}`)).json();
+      results.push({ merkleRootHex: j.merkle_root, time: j.timestamp, source: new URL(base).hostname });
+    } catch (e) { /* next */ }
+  }
+  if (!results.length) throw new Error('no block explorer reachable');
+  if (results.length > 1 && results[0].merkleRootHex !== results[1].merkleRootHex) throw new Error('explorers disagree');
+  return Object.assign(results[0], { source: results.map((r) => r.source).join(' + ') });
+}
+
+/* ---- 45-ripemd160.js ---- */
+/* RIPEMD-160 (used by some older OpenTimestamps proofs). Compact reference implementation. */
+function ripemd160(msg) {
+  const rl = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8,3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12,1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2,4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13];
+  const rr = [5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12,6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2,15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13,8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14,12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11];
+  const sl = [11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8,7,6,8,13,11,9,7,15,7,12,15,9,11,7,13,12,11,13,6,7,14,9,13,15,14,8,13,6,5,12,7,5,11,12,14,15,14,15,9,8,9,14,5,6,8,6,5,12,9,15,5,11,6,8,13,12,5,12,13,14,11,8,5,6];
+  const sr = [8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6,9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11,9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5,15,5,8,11,14,14,6,14,6,9,12,9,12,5,15,8,8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11];
+  const KL = [0x00000000, 0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xa953fd4e], KR = [0x50a28be6, 0x5c4dd124, 0x6d703ef3, 0x7a6d76e9, 0x00000000];
+  const f = (j, x, y, z) => (j < 16 ? x ^ y ^ z : j < 32 ? (x & y) | (~x & z) : j < 48 ? (x | ~y) ^ z : j < 64 ? (x & z) | (y & ~z) : x ^ (y | ~z));
+  const rotl = (x, n) => (x << n) | (x >>> (32 - n));
+  const ml = msg.length; const padLen = ((ml + 8) >> 6 << 6) + 64; const m = new Uint8Array(padLen); m.set(msg); m[ml] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(padLen - 8, (ml * 8) >>> 0, true); dv.setUint32(padLen - 4, Math.floor(ml / 0x20000000), true);
+  let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0;
+  for (let o = 0; o < padLen; o += 64) {
+    const X = []; for (let i = 0; i < 16; i++) X[i] = dv.getUint32(o + i * 4, true);
+    let al = h0, bl = h1, cl = h2, dl = h3, el = h4, ar = h0, br = h1, cr = h2, dr = h3, er = h4;
+    for (let j = 0; j < 80; j++) {
+      let t = (rotl((al + f(j, bl, cl, dl) + X[rl[j]] + KL[j >> 4]) | 0, sl[j]) + el) | 0; al = el; el = dl; dl = rotl(cl, 10); cl = bl; bl = t;
+      t = (rotl((ar + f(79 - j, br, cr, dr) + X[rr[j]] + KR[j >> 4]) | 0, sr[j]) + er) | 0; ar = er; er = dr; dr = rotl(cr, 10); cr = br; br = t;
+    }
+    const t = (h1 + cl + dr) | 0; h1 = (h2 + dl + er) | 0; h2 = (h3 + el + ar) | 0; h3 = (h4 + al + br) | 0; h4 = (h0 + bl + cr) | 0; h0 = t;
+  }
+  const out = new Uint8Array(20); const odv = new DataView(out.buffer); [h0, h1, h2, h3, h4].forEach((h, i) => odv.setUint32(i * 4, h, true)); return out;
+}
+
+/* ---- 46-sha256.js ---- */
+/* Incremental SHA-256 (FIPS 180-4). Used to hash user files in chunks so a
+   multi-gigabyte video is never loaded into memory all at once. WebCrypto's
+   digest() is not incremental, so this small implementation is inlined into
+   verify.html. Results are byte-identical to WebCrypto / Node crypto.
+   Small in-memory hashes (statement.json, Merkle nodes, …) still use sha256()
+   from 00-util.js (WebCrypto). */
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+const SHA256_H0 = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+const SHA256_FILE_CHUNK = 4 * 1024 * 1024; // 4 MiB
+const C2PA_HEAD_BYTES = 16 * 1024 * 1024; // scan only the start of the file for Content Credentials
+function sha256Rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+function sha256Compress(h, block) {
+  const w = new Uint32Array(64);
+  for (let i = 0; i < 16; i++) w[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) | (block[i * 4 + 2] << 8) | block[i * 4 + 3];
+  for (let i = 16; i < 64; i++) {
+    const s0 = sha256Rotr(w[i - 15], 7) ^ sha256Rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+    const s1 = sha256Rotr(w[i - 2], 17) ^ sha256Rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+    w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+  }
+  let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+  for (let i = 0; i < 64; i++) {
+    const S1 = sha256Rotr(e, 6) ^ sha256Rotr(e, 11) ^ sha256Rotr(e, 25);
+    const ch = (e & f) ^ (~e & g);
+    const temp1 = (hh + S1 + ch + SHA256_K[i] + w[i]) | 0;
+    const S0 = sha256Rotr(a, 2) ^ sha256Rotr(a, 13) ^ sha256Rotr(a, 22);
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    const temp2 = (S0 + maj) | 0;
+    hh = g; g = f; f = e; e = (d + temp1) | 0; d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+  }
+  h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+  h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
+}
+function sha256Create() { return { h: SHA256_H0.slice(), buf: new Uint8Array(64), bufLen: 0, bytes: 0n }; }
+function sha256Update(ctx, data) {
+  if (!data || !data.length) return;
+  ctx.bytes += BigInt(data.length);
+  let off = 0;
+  if (ctx.bufLen) {
+    const take = Math.min(64 - ctx.bufLen, data.length);
+    ctx.buf.set(data.subarray(0, take), ctx.bufLen);
+    ctx.bufLen += take; off += take;
+    if (ctx.bufLen === 64) { sha256Compress(ctx.h, ctx.buf); ctx.bufLen = 0; }
+  }
+  while (off + 64 <= data.length) { sha256Compress(ctx.h, data.subarray(off, off + 64)); off += 64; }
+  if (off < data.length) { ctx.buf.set(data.subarray(off)); ctx.bufLen = data.length - off; }
+}
+function sha256Finish(ctx) {
+  const bitLen = ctx.bytes * 8n;
+  ctx.buf[ctx.bufLen++] = 0x80;
+  if (ctx.bufLen > 56) {
+    while (ctx.bufLen < 64) ctx.buf[ctx.bufLen++] = 0;
+    sha256Compress(ctx.h, ctx.buf);
+    ctx.buf.fill(0); ctx.bufLen = 0;
+  }
+  while (ctx.bufLen < 56) ctx.buf[ctx.bufLen++] = 0;
+  const view = new DataView(ctx.buf.buffer, ctx.buf.byteOffset, 64);
+  view.setUint32(56, Number((bitLen >> 32n) & 0xffffffffn));
+  view.setUint32(60, Number(bitLen & 0xffffffffn));
+  sha256Compress(ctx.h, ctx.buf);
+  const out = new Uint8Array(32);
+  const odv = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) odv.setUint32(i * 4, ctx.h[i] >>> 0);
+  return out;
+}
+function formatBytes(n) {
+  if (n < 1024) return n + ' bytes';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+/* Hash a File, Blob, or Uint8Array in chunkSize pieces (default 4 MiB). */
+async function sha256Source(source, opts) {
+  opts = opts || {};
+  const chunkSize = opts.chunkSize || SHA256_FILE_CHUNK;
+  const onProgress = opts.onProgress;
+  const ctx = sha256Create();
+  const report = (done, total) => { if (onProgress) onProgress(done, total); };
+  if (source instanceof Uint8Array) {
+    const total = source.length;
+    for (let i = 0; i < total; i += chunkSize) {
+      sha256Update(ctx, source.subarray(i, Math.min(i + chunkSize, total)));
+      report(Math.min(i + chunkSize, total), total);
+      await Promise.resolve();
+    }
+    return sha256Finish(ctx);
+  }
+  const total = source.size;
+  if (typeof source.slice === 'function') {
+    for (let i = 0; i < total; i += chunkSize) {
+      const buf = new Uint8Array(await source.slice(i, Math.min(i + chunkSize, total)).arrayBuffer());
+      sha256Update(ctx, buf);
+      report(Math.min(i + chunkSize, total), total);
+      await Promise.resolve();
+    }
+    return sha256Finish(ctx);
+  }
+  throw new Error('sha256Source: expected a File, Blob, or Uint8Array');
+}
+
+/* ---- 50-rekor.js ---- */
+/* Optional Sigstore Rekor (v1 API) "hashedrekord" entry for the statement hash.
+   An ephemeral P-256 key signs the statement; the key is discarded. The entry only
+   shows the hash was logged publicly at integratedTime. It says nothing about who. */
+const REKOR_URL = 'https://rekor.sigstore.dev';
+function ecdsaRawToDer(raw) {
+  const n = raw.length / 2;
+  const int = (b) => { let i = 0; while (i < b.length - 1 && b[i] === 0) i++; b = b.subarray(i); if (b[0] & 0x80) b = concat(Uint8Array.of(0), b); return derEnc(0x02, b); };
+  return derSeq(int(raw.subarray(0, n)), int(raw.subarray(n)));
+}
+async function rekorCreateEntry(statementBytes, fetchFn = fetch, base = REKOR_URL) {
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const sig = ecdsaRawToDer(new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, statementBytes)));
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', kp.publicKey));
+  const body = { apiVersion: '0.0.1', kind: 'hashedrekord', spec: {
+    data: { hash: { algorithm: 'sha256', value: toHex(await sha256(statementBytes)) } },
+    signature: { content: toB64(sig), publicKey: { content: toB64(utf8(derToPem(spki, 'PUBLIC KEY'))) } } } };
+  const r = await fetchFn(base + '/api/v1/log/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.status !== 201) throw new Error('Rekor returned HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200));
+  return r.json(); // { "<uuid>": { body, integratedTime, logID, logIndex, verification } }
+}
+async function rekorRootFromProof(index, size, leaf, hashes) {
+  index = BigInt(index); size = BigInt(size);
+  if (index >= size) throw new Error('index beyond tree size');
+  const x = index ^ (size - 1n); const inner = x === 0n ? 0 : x.toString(2).length;
+  const node = (l, r) => sha256(concat(Uint8Array.of(1), l, r));
+  if (hashes.length < inner) throw new Error('proof too short');
+  let h = leaf;
+  for (let i = 0; i < inner; i++) h = ((index >> BigInt(i)) & 1n) === 0n ? await node(h, hashes[i]) : await node(hashes[i], h);
+  for (let i = inner; i < hashes.length; i++) h = await node(hashes[i], h);
+  return h;
+}
+/* entryJson: the object Rekor returned. trust: { rekorPubPem } */
+async function rekorVerify(entryJson, statementBytes, trust) {
+  const checks = [];
+  try {
+    const uuid = Object.keys(entryJson)[0]; const e = entryJson[uuid];
+    const pubDer = pemToDer(trust.rekorPubPem);
+    const logId = toHex(await sha256(pubDer));
+    checks.push(chk('rekor.logid', e.logID === logId ? 'pass' : 'fail', 'Entry is from the bundled Rekor log key', 'rekor.sigstore.dev (' + logId.slice(0, 16) + '…)'));
+    const bodyBytes = fromB64(e.body); const body = JSON.parse(utf8dec(bodyBytes));
+    const wantHex = toHex(await sha256(statementBytes));
+    const okKind = body.kind === 'hashedrekord' && body.spec.data.hash.algorithm === 'sha256' && body.spec.data.hash.value === wantHex;
+    checks.push(chk('rekor.hash', okKind ? 'pass' : 'fail', 'Rekor entry records this statement hash', body.spec && body.spec.data.hash.value));
+    try {
+      const pem = utf8dec(fromB64(body.spec.signature.publicKey.content));
+      let spki = pemToDer(pem), keyAlg = OID.ecPublicKey, curve = OID.p256;
+      if (/CERTIFICATE/.test(pem)) { const c = x509Parse(spki); spki = c.spkiRaw; keyAlg = c.keyAlgOid; curve = c.curveOid; }
+      const ok = await verifyWithSpki(spki, keyAlg, curve, keyAlg === OID.ecPublicKey ? OID.ecdsaSha256 : OID.sha256WithRSA, 'SHA-256', fromB64(body.spec.signature.content), statementBytes);
+      checks.push(chk('rekor.entrysig', ok ? 'pass' : 'fail', 'Entry signature (throwaway key) matches the statement', 'Proves nothing about identity.'));
+    } catch (err) { checks.push(chk('rekor.entrysig', 'warn', 'Entry signature not checked', err.message)); }
+    const rk = await crypto.subtle.importKey('spki', pubDer, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const canon = `{"body":${JSON.stringify(e.body)},"integratedTime":${e.integratedTime},"logID":${JSON.stringify(e.logID)},"logIndex":${e.logIndex}}`;
+    const setOk = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(fromB64(e.verification.signedEntryTimestamp), 32), utf8(canon));
+    checks.push(chk('rekor.set', setOk ? 'pass' : 'fail', 'Rekor signed the entry time (SET)', new Date(e.integratedTime * 1000).toISOString()));
+    const ip = e.verification.inclusionProof;
+    if (ip) {
+      const leaf = await sha256(concat(Uint8Array.of(0), bodyBytes));
+      const root = await rekorRootFromProof(ip.logIndex, ip.treeSize, leaf, ip.hashes.map(fromHex));
+      const rootOk = toHex(root) === ip.rootHash;
+      checks.push(chk('rekor.inclusion', rootOk ? 'pass' : 'fail', 'Merkle inclusion proof reaches the logged tree root', `tree size ${ip.treeSize}`));
+      if (ip.checkpoint) {
+        const [text, sigs] = ip.checkpoint.split('\n\n');
+        const lines = text.split('\n');
+        const cpOk = lines[1] === String(ip.treeSize) && toHex(fromB64(lines[2])) === ip.rootHash;
+        let sigOk = false;
+        for (const line of sigs.trim().split('\n')) {
+          const m = /^\u2014 (\S+) (\S+)$/.exec(line); if (!m) continue;
+          const raw = fromB64(m[2]);
+          try { sigOk = sigOk || await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(raw.subarray(4), 32), utf8(text + '\n')); } catch (err) { /* */ }
+        }
+        checks.push(chk('rekor.checkpoint', cpOk && sigOk ? 'pass' : 'fail', 'Log checkpoint is signed by Rekor and matches the proof', lines[0]));
+      }
+    } else checks.push(chk('rekor.inclusion', 'warn', 'No inclusion proof stored', ''));
+    checks.push(chk('rekor.time', 'info', 'Rekor integrated time (UTC)', new Date(e.integratedTime * 1000).toISOString()));
+    checks.push(chk('rekor.consistency', 'info', 'Not checked offline: that this tree is consistent with Rekor\'s current tree', 'Use rekor-cli verify or a Sigstore monitor online.'));
+    return { checks, time: e.integratedTime, uuid, logIndex: e.logIndex };
+  } catch (err) { checks.push(chk('rekor.parse', 'fail', 'Rekor entry could not be checked', err.message)); return { checks }; }
+}
+
+/* ---- 55-ct.js ---- */
+/* Certificate Transparency (CT) extra witness.
+   Digests collected in time-window sub-batches are Merkle-tree'd (RFC 6962).
+   Each sub-batch root R is encoded as a DNS name:
+     <first 32 hex chars of R>.<last 32 hex chars of R>.ct.lightdrawer.org
+   A later certificate covering up to 100 of those names is the public witness
+   (its SCTs / CT-log entries). This file is the shared browser + script logic.
+   Hostname choice: two hex labels (32 + 32) instead of a single base32 label.
+   Hex matches the fingerprints already shown in the UI, each label is well under
+   the 63-character DNS limit, and anyone can split a SHA-256 in half and read
+   the name. Full FQDN is 87 characters, under the 253-character DNS limit. */
+const CT_DEFAULTS = {
+  subBatchMs: 15 * 60 * 1000,
+  anchorEveryMs: 6 * 60 * 60 * 1000,
+  maxSansPerCert: 100,
+  hostnameSuffix: 'ct.lightdrawer.org',
+  acmeStagingDirectory: 'https://acme-staging-v02.api.letsencrypt.org/directory',
+  acmeProductionDirectories: [
+    'https://acme-v02.api.letsencrypt.org/directory',
+    'https://acme-v01.api.letsencrypt.org/directory',
+  ],
+};
+const CT_LE_CERTS_PER_WEEK = 50;
+const CT_LE_HEADROOM_TARGET = 28; // 4 certs/day * 7 = 28, leaving 22 for retries
+function ctConfigNormalize(cfg) {
+  const raw = {};
+  for (const [k, v] of Object.entries(cfg || {})) if (v !== undefined) raw[k] = v;
+  const c = Object.assign({}, CT_DEFAULTS, raw);
+  if (c.subBatchMs < 60 * 1000) throw new Error('sub-batch window must be at least 1 minute');
+  if (c.anchorEveryMs < c.subBatchMs) throw new Error('anchor interval must be at least one sub-batch');
+  if (c.maxSansPerCert < 1 || c.maxSansPerCert > 100) throw new Error('max SANs per cert must be 1–100 (Let\'s Encrypt identifier limit)');
+  c.hostnameSuffix = String(c.hostnameSuffix).toLowerCase().replace(/^\.+|\.+$/g, '');
+  const warnings = [];
+  const weekly = ctWeeklyCertEstimate(c.anchorEveryMs);
+  if (weekly > CT_LE_HEADROOM_TARGET) warnings.push(`This schedule requests about ${weekly} certificates per week. Let's Encrypt allows ${CT_LE_CERTS_PER_WEEK} new certificates per registered domain per 7 days (refill: 1 every 202 minutes). Default (every 6 hours) is ${CT_LE_HEADROOM_TARGET}/week, leaving room for retries.`);
+  const sansPerAnchor = Math.ceil(c.anchorEveryMs / c.subBatchMs);
+  if (sansPerAnchor > c.maxSansPerCert) warnings.push(`A ${c.anchorEveryMs} ms anchor with ${c.subBatchMs} ms sub-batches would produce ${sansPerAnchor} names, above maxSansPerCert=${c.maxSansPerCert}. Extra sub-batches wait for the next certificate.`);
+  return { config: c, warnings, weekly, sansPerAnchor: Math.min(sansPerAnchor, c.maxSansPerCert) };
+}
+function ctWeeklyCertEstimate(anchorEveryMs) {
+  return Math.ceil((7 * 24 * 60 * 60 * 1000) / anchorEveryMs);
+}
+function ctRootToHostname(rootHex, suffix) {
+  const h = String(rootHex).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(h)) throw new Error('root must be 32-byte SHA-256 hex');
+  suffix = (suffix || CT_DEFAULTS.hostnameSuffix).toLowerCase().replace(/^\.+|\.+$/g, '');
+  return h.slice(0, 32) + '.' + h.slice(32) + '.' + suffix;
+}
+function ctHostnameToRoot(hostname, suffix) {
+  const hn = String(hostname).toLowerCase().replace(/\.$/, '');
+  suffix = (suffix || CT_DEFAULTS.hostnameSuffix).toLowerCase().replace(/^\.+|\.+$/g, '');
+  if (!hn.endsWith('.' + suffix)) throw new Error('hostname does not use the expected suffix ' + suffix);
+  const labels = hn.slice(0, hn.length - suffix.length - 1).split('.');
+  if (labels.length !== 2 || !/^[0-9a-f]{32}$/.test(labels[0]) || !/^[0-9a-f]{32}$/.test(labels[1])) throw new Error('hostname is not two 32-character hex labels encoding a SHA-256');
+  return labels[0] + labels[1];
+}
+function ctLargestPowerOf2LessThan(n) {
+  let k = 1;
+  while ((k << 1) < n) k <<= 1;
+  return k;
+}
+async function ctMerkleTreeHash(leafHashes) {
+  const n = leafHashes.length;
+  if (n === 0) return sha256(new Uint8Array(0));
+  if (n === 1) return leafHashes[0];
+  const k = ctLargestPowerOf2LessThan(n);
+  const left = await ctMerkleTreeHash(leafHashes.slice(0, k));
+  const right = await ctMerkleTreeHash(leafHashes.slice(k));
+  return sha256(concat(Uint8Array.of(1), left, right));
+}
+async function ctAuditPath(index, leafHashes) {
+  const n = leafHashes.length;
+  if (n <= 1) return [];
+  const k = ctLargestPowerOf2LessThan(n);
+  if (index < k) {
+    const path = await ctAuditPath(index, leafHashes.slice(0, k));
+    path.push(await ctMerkleTreeHash(leafHashes.slice(k)));
+    return path;
+  }
+  const path = await ctAuditPath(index - k, leafHashes.slice(k));
+  path.push(await ctMerkleTreeHash(leafHashes.slice(0, k)));
+  return path;
+}
+async function ctRootFromPath(leafHash, index, treeSize, path) {
+  if (treeSize === 0) throw new Error('empty tree');
+  if (index < 0 || index >= treeSize) throw new Error('leaf index out of range');
+  if (treeSize === 1) return { root: leafHash, used: 0 };
+  const k = ctLargestPowerOf2LessThan(treeSize);
+  if (index < k) {
+    const inner = await ctRootFromPath(leafHash, index, k, path);
+    const right = path[inner.used];
+    if (!right) throw new Error('Merkle path too short');
+    return { root: await sha256(concat(Uint8Array.of(1), inner.root, right)), used: inner.used + 1 };
+  }
+  const inner = await ctRootFromPath(leafHash, index - k, treeSize - k, path);
+  const left = path[inner.used];
+  if (!left) throw new Error('Merkle path too short');
+  return { root: await sha256(concat(Uint8Array.of(1), left, inner.root)), used: inner.used + 1 };
+}
+async function ctMerkleBuild(digestHexes) {
+  const uniq = [...new Set(digestHexes.map((d) => String(d).toLowerCase()))].sort();
+  if (uniq.some((d) => !/^[0-9a-f]{64}$/.test(d))) throw new Error('each digest must be 64 hex chars');
+  const leafHashes = [];
+  for (const d of uniq) leafHashes.push(await sha256(concat(Uint8Array.of(0), fromHex(d))));
+  const root = await ctMerkleTreeHash(leafHashes);
+  const proofs = {};
+  for (let i = 0; i < uniq.length; i++) {
+    const path = await ctAuditPath(i, leafHashes);
+    proofs[uniq[i]] = { index: i, path: path.map(toHex) };
+  }
+  return { root: toHex(root), tree_size: uniq.length, leaves: uniq, proofs };
+}
+async function ctMerkleVerify(digestHex, index, pathHexes, rootHex, treeSize) {
+  const digest = String(digestHex).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error('digest must be 64 hex chars');
+  const leaf = await sha256(concat(Uint8Array.of(0), fromHex(digest)));
+  const path = (pathHexes || []).map(fromHex);
+  const got = await ctRootFromPath(leaf, index, treeSize, path);
+  if (got.used !== path.length) throw new Error('Merkle path has unused extra hashes');
+  return bytesEq(got.root, fromHex(rootHex));
+}
+function ctNewState(cfg) {
+  const { config, warnings } = ctConfigNormalize(cfg);
+  return { config, warnings, pending: [], sub_batches: [], certs: [], last_anchor_at: null };
+}
+function ctWindowStart(ts, subBatchMs) { return Math.floor(ts / subBatchMs) * subBatchMs; }
+function ctSubmit(state, digest, now) {
+  const d = String(digest).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(d)) throw new Error('digest must be 64 hex chars');
+  const t = (now || new Date()).getTime ? (now instanceof Date ? now : new Date(now)) : new Date(now);
+  if (state.pending.some((p) => p.digest === d)) return { added: false, reason: 'already pending' };
+  if (state.sub_batches.some((b) => b.leaves.includes(d))) return { added: false, reason: 'already in a batch' };
+  state.pending.push({ digest: d, received_at: t.toISOString() });
+  return { added: true };
+}
+async function ctCloseDueSubBatches(state, now, opts) {
+  const includeOpen = !!(opts && opts.includeOpen);
+  const ms = state.config.subBatchMs;
+  const nowMs = (now instanceof Date ? now : new Date(now || Date.now())).getTime();
+  const currentStart = ctWindowStart(nowMs, ms);
+  const groups = new Map(), keep = [];
+  for (const p of state.pending) {
+    const ws = ctWindowStart(Date.parse(p.received_at), ms);
+    if (ws < currentStart || includeOpen) {
+      if (!groups.has(ws)) groups.set(ws, []);
+      groups.get(ws).push(p);
+    } else keep.push(p);
+  }
+  const closed = [];
+  for (const [ws, items] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+    const tree = await ctMerkleBuild(items.map((i) => i.digest));
+    const hostname = ctRootToHostname(tree.root, state.config.hostnameSuffix);
+    const batch = {
+      id: new Date(ws).toISOString(),
+      opened_at: new Date(ws).toISOString(),
+      closed_at: new Date(ws + ms).toISOString(),
+      root: tree.root,
+      tree_size: tree.tree_size,
+      leaves: tree.leaves,
+      proofs: tree.proofs,
+      hostname,
+      published: false,
+      cert_id: null,
+    };
+    state.sub_batches.push(batch);
+    closed.push(batch);
+  }
+  state.pending = keep;
+  return closed;
+}
+function ctPlanAnchor(state, now, opts) {
+  const force = !!(opts && opts.force);
+  const cfg = state.config;
+  const nowMs = (now instanceof Date ? now : new Date(now || Date.now())).getTime();
+  if (!force && state.last_anchor_at) {
+    if (nowMs - Date.parse(state.last_anchor_at) < cfg.anchorEveryMs) return null;
+  }
+  const unpublished = state.sub_batches.filter((b) => !b.published);
+  if (!unpublished.length) return null;
+  const chosen = unpublished.slice(0, cfg.maxSansPerCert);
+  return { hostnames: chosen.map((b) => b.hostname), batch_ids: chosen.map((b) => b.id), roots: chosen.map((b) => b.root) };
+}
+function ctRecordIssuance(state, plan, issued) {
+  const id = (issued && issued.issuedAt) || new Date().toISOString();
+  const cert = {
+    id,
+    issued_at: id,
+    hostnames: plan.hostnames.slice(),
+    certificate_pem: issued.certPem,
+    chain_pems: (issued.chainPems || []).slice(),
+    scts: (issued.scts || []).slice(),
+  };
+  state.certs.push(cert);
+  state.last_anchor_at = cert.issued_at;
+  for (const bid of plan.batch_ids) {
+    const b = state.sub_batches.find((x) => x.id === bid);
+    if (b) { b.published = true; b.cert_id = id; }
+  }
+  return cert;
+}
+function ctPendingEntry(digestHex, extra) {
+  return Object.assign({
+    lightdrawer_ct: 1,
+    status: 'pending',
+    digest: String(digestHex).toLowerCase(),
+    submitted_at: new Date().toISOString(),
+    note: 'This fingerprint is waiting to be included in the next certificate-log stamp. Sub-batches close about every 15 minutes; a certificate covering those batches is requested about every 6 hours. Re-check later with verify.html (upgrade) or GET /api/ct/upgrade?digest=' + String(digestHex).toLowerCase() + '.',
+  }, extra || {});
+}
+function ctUpgradeFromState(state, digest) {
+  const d = String(digest).toLowerCase();
+  for (const b of state.sub_batches) {
+    if (!b.leaves.includes(d)) continue;
+    const proof = b.proofs[d];
+    const merkle = { leaf_index: proof.index, tree_size: b.tree_size, path: proof.path, root: b.root, algorithm: 'RFC 6962 SHA-256' };
+    if (!b.published) {
+      return { lightdrawer_ct: 1, status: 'pending', digest: d, sub_batch_id: b.id, hostname: b.hostname, merkle, note: 'Sub-batch is closed; waiting for the next certificate-log stamp.' };
+    }
+    const cert = state.certs.find((c) => c.id === b.cert_id);
+    return {
+      lightdrawer_ct: 1,
+      status: 'anchored',
+      digest: d,
+      merkle,
+      hostname: b.hostname,
+      certificate_pem: cert && cert.certificate_pem,
+      chain_pems: (cert && cert.chain_pems) || [],
+      scts: (cert && cert.scts) || [],
+      crtsh_url: 'https://crt.sh/?q=' + encodeURIComponent(b.hostname),
+      sub_batch: { id: b.id, opened_at: b.opened_at, closed_at: b.closed_at },
+      issued_at: cert && cert.issued_at,
+    };
+  }
+  if (state.pending.some((p) => p.digest === d)) return ctPendingEntry(d);
+  return null;
+}
+
+/* --- SCT parsing (RFC 6962) --- */
+function ctU16enc(n) { return Uint8Array.of((n >> 8) & 255, n & 255); }
+function ctU24enc(n) { return Uint8Array.of((n >> 16) & 255, (n >> 8) & 255, n & 255); }
+function ctU64enc(n) {
+  const o = new Uint8Array(8); let v = BigInt(n);
+  for (let i = 7; i >= 0; i--) { o[i] = Number(v & 0xffn); v >>= 8n; }
+  return o;
+}
+function ctReadU16(b, o) { return (b[o] << 8) | b[o + 1]; }
+function ctReadU64(b, o) { let v = 0n; for (let i = 0; i < 8; i++) v = (v << 8n) | BigInt(b[o + i]); return Number(v); }
+function ctParseSct(raw) {
+  if (raw.length < 43) throw new Error('SCT too short');
+  let o = 0;
+  const version = raw[o++];
+  const logId = raw.subarray(o, o + 32); o += 32;
+  const timestampMs = ctReadU64(raw, o); o += 8;
+  const extLen = ctReadU16(raw, o); o += 2;
+  if (o + extLen + 4 > raw.length) throw new Error('SCT extensions overrun');
+  const extensions = raw.subarray(o, o + extLen); o += extLen;
+  const hashAlg = raw[o++], sigAlg = raw[o++];
+  const sigLen = ctReadU16(raw, o); o += 2;
+  if (o + sigLen > raw.length) throw new Error('SCT signature overrun');
+  const signature = raw.subarray(o, o + sigLen);
+  return { version, logId, timestampMs, extensions, hashAlg, sigAlg, signature, raw };
+}
+function ctParseSctList(bytes) {
+  if (!bytes || bytes.length < 2) return [];
+  let list = bytes;
+  if (list[0] === 0x04) { try { list = derParse(list).content; } catch (e) { /* not DER-wrapped */ } }
+  if (list.length < 2) return [];
+  const listLen = ctReadU16(list, 0);
+  let off = 2, end = 2 + listLen;
+  if (end > list.length) { end = list.length; }
+  const scts = [];
+  while (off + 2 <= end) {
+    const n = ctReadU16(list, off); off += 2;
+    if (off + n > list.length) break;
+    scts.push(ctParseSct(list.subarray(off, off + n)));
+    off += n;
+  }
+  return scts;
+}
+function ctSctSignedData(sct, entryType, signedEntry) {
+  return concat(
+    Uint8Array.of(sct.version & 0xff),
+    Uint8Array.of(0),
+    ctU64enc(sct.timestampMs),
+    ctU16enc(entryType),
+    entryType === 0 ? concat(ctU24enc(signedEntry.length), signedEntry) : signedEntry,
+    ctU16enc(sct.extensions.length),
+    sct.extensions
+  );
+}
+function ctLookupLog(trust, logId) {
+  const idHex = toHex(logId);
+  const logs = (trust && trust.ctLogs) || [];
+  for (const log of logs) {
+    const listed = log.log_id ? toHex(fromB64(log.log_id)) : '';
+    const keyHex = log.key ? toHex(fromB64(log.key)) : '';
+    if (listed === idHex || (keyHex && toHex(fromB64(log.log_id || '')) === idHex)) return log;
+    if (listed === idHex) return log;
+  }
+  for (const log of logs) {
+    if (log.log_id && toHex(fromB64(log.log_id)) === idHex) return log;
+  }
+  return null;
+}
+async function ctVerifySctSignature(sct, signedData, log) {
+  if (!log || !log.key) return false;
+  const spki = fromB64(log.key);
+  let parsed;
+  try { parsed = { spkiRaw: spki, keyAlgOid: OID.ecPublicKey, curveOid: OID.p256 }; } catch (e) { return false; }
+  try {
+    const inner = derParse(spki);
+    const alg = inner.children[0];
+    parsed.keyAlgOid = derOid(alg.children[0]);
+    parsed.curveOid = alg.children[1] && alg.children[1].tag === 0x06 ? derOid(alg.children[1]) : OID.p256;
+    parsed.spkiRaw = spki;
+  } catch (e) { /* use defaults */ }
+  const sigAlg = sct.sigAlg === 1 ? OID.sha256WithRSA : OID.ecdsaSha256;
+  try {
+    return await verifyWithSpki(parsed.spkiRaw, parsed.keyAlgOid, parsed.curveOid, sigAlg, 'SHA-256', sct.signature, signedData);
+  } catch (e) { return false; }
+}
+
+function ctSplitPems(pemText) {
+  const out = [], re = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
+  let m; while ((m = re.exec(pemText || ''))) out.push(m[0] + '\n');
+  return out;
+}
+async function ctVerifyChain(certs, trust) {
+  if (!certs.length) return { ok: false, detail: 'no certificates' };
+  const extras = ((trust && trust.isrgRoots) || []).map((r) => x509Parse(pemToDer(r.pem || r)));
+  const extraTest = ((trust && trust.extraRoots) || []).map((r) => x509Parse(typeof r === 'string' ? pemToDer(r) : r));
+  const roots = extras.concat(extraTest);
+  for (let i = 0; i < certs.length - 1; i++) {
+    try {
+      if (!(await x509VerifyIssuedBy(certs[i], certs[i + 1]))) return { ok: false, detail: 'chain signature failed at index ' + i };
+    } catch (e) { return { ok: false, detail: e.message }; }
+  }
+  const last = certs[certs.length - 1];
+  for (const root of roots) {
+    try {
+      if (bytesEq(last.spkiRaw, root.spkiRaw) || (await x509VerifyIssuedBy(last, root)) || bytesEq(last.der, root.der)) {
+        return { ok: true, detail: root.subject || 'pinned root' };
+      }
+    } catch (e) { /* try next */ }
+    if (bytesEq(last.subjectRaw, root.subjectRaw) && bytesEq(last.spkiRaw, root.spkiRaw)) return { ok: true, detail: root.subject || 'pinned root' };
+  }
+  if (certs.length === 1 && extraTest.some((r) => bytesEq(r.der, certs[0].der))) return { ok: true, detail: 'test root (self-signed fixture)' };
+  return { ok: false, detail: 'did not chain to a pinned public CA root' };
+}
+
+async function ctVerify(entry, statementDigestHex, trust) {
+  const checks = [];
+  const times = [];
+  try {
+    if (!entry || entry.lightdrawer_ct !== 1) {
+      checks.push(chk('ct.parse', 'fail', 'ct.json is not a LightDrawer certificate-log proof', ''));
+      return { checks, times };
+    }
+    const digest = String(statementDigestHex).toLowerCase();
+    if (entry.digest && entry.digest.toLowerCase() !== digest) {
+      checks.push(chk('ct.digest', 'fail', 'Proof is for a different fingerprint', entry.digest));
+      return { checks, times };
+    }
+    checks.push(chk('ct.digest', 'pass', 'Proof is about this statement fingerprint', digest));
+    if (entry.status === 'pending') {
+      checks.push(chk('ct.pending', 'info', 'Certificate-log stamp is still pending', entry.note || 'Come back after the next stamp (about every 6 hours) and use upgrade.'));
+      return { checks, times };
+    }
+    if (entry.status !== 'anchored') {
+      checks.push(chk('ct.status', 'fail', 'Unknown ct.json status', String(entry.status)));
+      return { checks, times };
+    }
+    const m = entry.merkle || {};
+    const pathOk = await ctMerkleVerify(digest, m.leaf_index, m.path, m.root, m.tree_size);
+    checks.push(chk('ct.merkle', pathOk ? 'pass' : 'fail', pathOk ? 'Fingerprint is in the batch Merkle tree' : 'Merkle path does not reach the claimed batch root', `index ${m.leaf_index} of ${m.tree_size}, root ${m.root}`));
+    if (!pathOk) return { checks, times };
+    let hostRoot;
+    try { hostRoot = ctHostnameToRoot(entry.hostname, (trust && trust.ctHostnameSuffix) || CT_DEFAULTS.hostnameSuffix); }
+    catch (e) { checks.push(chk('ct.hostname', 'fail', 'Anchor hostname does not encode a SHA-256', e.message)); return { checks, times }; }
+    const hostOk = hostRoot === String(m.root).toLowerCase();
+    checks.push(chk('ct.hostname', hostOk ? 'pass' : 'fail', hostOk ? 'Hostname is the batch root written as two hex labels' : 'Hostname does not match the Merkle root', entry.hostname));
+    if (!hostOk) return { checks, times };
+    if (!entry.certificate_pem) {
+      checks.push(chk('ct.cert', 'fail', 'No certificate in this proof', ''));
+      return { checks, times };
+    }
+    const pems = ctSplitPems(entry.certificate_pem).concat((entry.chain_pems || []).flatMap(ctSplitPems));
+    const certs = pems.map((p) => x509Parse(pemToDer(p)));
+    const leaf = certs[0];
+    const sans = x509SANs(leaf);
+    const sanOk = sans.map((s) => s.toLowerCase()).includes(String(entry.hostname).toLowerCase());
+    checks.push(chk('ct.san', sanOk ? 'pass' : 'fail', sanOk ? 'Certificate names this batch root' : 'Certificate does not list the expected name', sans.join(', ') || '(no DNS names)'));
+    if (!sanOk) return { checks, times };
+    checks.push(chk('ct.notbefore', 'info', 'Certificate notBefore (CA clock; Let\'s Encrypt often backdates by about an hour for clock skew)', leaf.notBefore.toISOString()));
+    const chain = await ctVerifyChain(certs, trust || {});
+    checks.push(chk('ct.chain', chain.ok ? 'pass' : 'warn', chain.ok ? 'Certificate chains to a pinned CA root' : 'Certificate issuer was not checked against a pinned public CA root', chain.detail));
+    let scts = [];
+    const embedded = x509SctListBytes(leaf);
+    if (embedded) { try { scts = ctParseSctList(embedded); } catch (e) { checks.push(chk('ct.sct.parse', 'warn', 'Could not parse SCTs embedded in the certificate', e.message)); } }
+    if (!scts.length && entry.scts && entry.scts.length) {
+      for (const s of entry.scts) {
+        if (s.raw_b64) { try { scts.push(ctParseSct(fromB64(s.raw_b64))); } catch (e) { /* skip */ } }
+      }
+    }
+    if (!scts.length) {
+      checks.push(chk('ct.sct', chain.ok ? 'info' : 'warn', 'No Signed Certificate Timestamps to check', 'A Let\'s Encrypt certificate normally embeds SCTs. Without a verified SCT or a trusted chain, this PEM alone is not a public witness.'));
+    }
+    let anySct = false;
+    for (const sct of scts) {
+      const log = ctLookupLog(trust || {}, sct.logId);
+      const signedX509 = ctSctSignedData(sct, 0, leaf.der);
+      let verified = false;
+      if (log) verified = await ctVerifySctSignature(sct, signedX509, log);
+      const name = (log && (log.name || log.description)) || ('log ' + toHex(sct.logId).slice(0, 16) + '…');
+      const when = new Date(sct.timestampMs).toISOString();
+      checks.push(chk('ct.sct.' + toHex(sct.logId).slice(0, 8), verified ? 'pass' : (log ? 'warn' : 'info'), verified ? 'SCT signature checks out (' + name + ')' : (log ? 'SCT signature did not verify as an x509_entry against ' + name + ' (precert SCTs need the precertificate TBS; not reconstructed here)' : 'SCT from an unknown log (key not in the bundled list)'), when + (log && log.mmd ? `; this log advertises MMD ${log.mmd}s` : '')));
+      if (verified) { anySct = true; times.push({ source: 'Certificate Transparency SCT (' + name + ')', time: new Date(sct.timestampMs), note: 'SCT timestamp: the log first saw this certificate no later than this moment. The log may take up to its maximum merge delay (commonly 24 hours) to show it in a queryable tree.' }); }
+    }
+    if (chain.ok) {
+      times.push({ source: 'Certificate notBefore (certificate-log stamp)', time: leaf.notBefore, note: 'CA-stated start time; may be backdated slightly. Prefer a verified SCT timestamp when one is available.' });
+    }
+    if (!anySct && !chain.ok) {
+      checks.push(chk('ct.witness', 'fail', 'No trusted witness: neither a pinned CA chain nor a verified SCT', 'A self-signed or unknown certificate that happens to name the batch root is not enough.'));
+    }
+    if (entry.crtsh_url) checks.push(chk('ct.crtsh', 'info', 'Look up this name on crt.sh (online)', entry.crtsh_url));
+    return { checks, times };
+  } catch (err) {
+    checks.push(chk('ct.parse', 'fail', 'Certificate-log proof could not be checked', err.message));
+    return { checks, times };
+  }
+}
+
+/* ---- 60-zip.js ---- */
+/* Tiny ZIP writer (stored) and reader (stored + deflate). */
+const _crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = _crcTable[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+function zipWrite(entries, when = new Date()) {
+  const dosTime = (when.getHours() << 11) | (when.getMinutes() << 5) | (when.getSeconds() >> 1);
+  const dosDate = ((when.getFullYear() - 1980) << 9) | ((when.getMonth() + 1) << 5) | when.getDate();
+  const parts = [], central = []; let off = 0;
+  for (const e of entries) {
+    const name = utf8(e.name), data = e.data, crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
+    lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true);
+    ch.setUint16(28, name.length, true); ch.setUint32(38, 0o100644 << 16, true); ch.setUint32(42, off, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    off += 30 + name.length + data.length;
+  }
+  const cd = concat(...central);
+  const eo = new DataView(new ArrayBuffer(22));
+  eo.setUint32(0, 0x06054b50, true); eo.setUint16(8, entries.length, true); eo.setUint16(10, entries.length, true); eo.setUint32(12, cd.length, true); eo.setUint32(16, off, true);
+  return concat(...parts, cd, new Uint8Array(eo.buffer));
+}
+async function _inflateRaw(b) { const ds = new DecompressionStream('deflate-raw'); const s = new Blob([b]).stream().pipeThrough(ds); return new Uint8Array(await new Response(s).arrayBuffer()); }
+async function zipRead(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1; for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not a ZIP file');
+  const count = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+  const files = {};
+  for (let k = 0; k < count; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('bad ZIP central directory');
+    const method = dv.getUint16(p + 10, true), crc = dv.getUint32(p + 16, true), csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = utf8dec(buf.subarray(p + 46, p + 46 + nlen)); p += 46 + nlen + xlen + clen;
+    if (usize > 512 * 1024 * 1024) throw new Error('ZIP entry too large: ' + name);
+    const ds = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+    const raw = buf.subarray(ds, ds + csize);
+    let data; if (method === 0) data = raw; else if (method === 8) data = await _inflateRaw(raw); else throw new Error('unsupported ZIP method ' + method);
+    if (crc32(data) !== crc) throw new Error('ZIP CRC mismatch in ' + name);
+    if (!name.endsWith('/')) files[name.replace(/^(?!proofs\/|trust\/)[^/]+\/(?=(statement|receipt|README|verify|proofs|trust)\b)/, '')] = data;
+  }
+  return files;
+}
+
+/* ---- 70-c2pa.js ---- */
+/* Read-only C2PA (Content Credentials) inspection. Finds the JUMBF manifest store,
+   decodes the active claim (CBOR) and the signer certificate name. It does NOT
+   validate C2PA signatures, hash bindings, or trust lists. Use c2patool or
+   https://contentcredentials.org/verify for full validation. */
+function cborDecode(b) {
+  let p = 0;
+  const u = (n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + b[p++]; return v; };
+  const len = (ai) => (ai < 24 ? ai : ai === 24 ? u(1) : ai === 25 ? u(2) : ai === 26 ? u(4) : ai === 27 ? u(8) : ai === 31 ? -1 : (() => { throw new Error('CBOR: bad length'); })());
+  const item = (depth) => {
+    if (depth > 64) throw new Error('CBOR: too deep');
+    if (p >= b.length) throw new Error('CBOR: truncated');
+    const ib = b[p++], mt = ib >> 5, ai = ib & 31;
+    if (mt === 7) {
+      if (ai === 20) return false; if (ai === 21) return true; if (ai === 22 || ai === 23) return null;
+      if (ai === 25) { const h = u(2); const e = (h >> 10) & 31, f = h & 1023; const v = e === 0 ? f * 2 ** -24 : e === 31 ? (f ? NaN : Infinity) : (1 + f / 1024) * 2 ** (e - 15); return h & 0x8000 ? -v : v; }
+      if (ai === 26) { const v = new DataView(b.buffer, b.byteOffset + p, 4).getFloat32(0); p += 4; return v; }
+      if (ai === 27) { const v = new DataView(b.buffer, b.byteOffset + p, 8).getFloat64(0); p += 8; return v; }
+      if (ai === 31) return Symbol.for('break');
+      return undefined;
+    }
+    const n = len(ai);
+    switch (mt) {
+      case 0: return n; case 1: return -1 - n;
+      case 2: case 3: {
+        if (n < 0) { const chunks = []; for (;;) { const c = item(depth + 1); if (c === Symbol.for('break')) break; chunks.push(typeof c === 'string' ? utf8(c) : c); } const all = concat(...chunks); return mt === 2 ? all : utf8dec(all); }
+        const s = b.subarray(p, p + n); p += n; return mt === 2 ? s : utf8dec(s);
+      }
+      case 4: { const a = []; if (n < 0) { for (;;) { const v = item(depth + 1); if (v === Symbol.for('break')) break; a.push(v); } } else for (let i = 0; i < n; i++) a.push(item(depth + 1)); return a; }
+      case 5: { const m = new Map(); const add = () => { const k = item(depth + 1); if (k === Symbol.for('break')) return false; m.set(k, item(depth + 1)); return true; }; if (n < 0) { while (add()); } else for (let i = 0; i < n; i++) add(); return m; }
+      case 6: return { tag: n, value: item(depth + 1) };
+    }
+  };
+  return item(0);
+}
+function cborToPlain(v, depth = 0) {
+  if (depth > 12) return '…';
+  if (v instanceof Map) { const o = {}; for (const [k, x] of v) o[String(k)] = cborToPlain(x, depth + 1); return o; }
+  if (Array.isArray(v)) return v.map((x) => cborToPlain(x, depth + 1));
+  if (v instanceof Uint8Array) return `<${v.length} bytes>`;
+  if (v && typeof v === 'object' && 'tag' in v) return cborToPlain(v.value, depth + 1);
+  return v;
+}
+function jumbfBoxes(b, start = 0, end = b.length) {
+  const out = []; let p = start;
+  while (p + 8 <= end) {
+    const dv = new DataView(b.buffer, b.byteOffset + p);
+    let size = dv.getUint32(0); const type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]); let hdr = 8;
+    if (size === 1) { size = Number(dv.getBigUint64(8)); hdr = 16; } else if (size === 0) size = end - p;
+    if (size < hdr || p + size > end) break;
+    const box = { type, start: p, cs: p + hdr, end: p + size };
+    if (type === 'jumb') {
+      box.children = jumbfBoxes(b, box.cs, box.end);
+      const d = box.children[0];
+      if (d && d.type === 'jumd') { const toggles = b[d.cs + 16]; box.uuid = toHex(b.subarray(d.cs, d.cs + 16)); if (toggles & 2) { let q = d.cs + 17; let s = q; while (q < d.end && b[q] !== 0) q++; box.label = utf8dec(b.subarray(s, q)); } }
+    }
+    out.push(box); p += size;
+  }
+  return out;
+}
+function c2paExtractStore(b) {
+  // JPEG: APP11 segments carrying JUMBF (ISO 19566-5)
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    const groups = {}; let p = 2;
+    while (p + 4 < b.length && b[p] === 0xff) {
+      const m = b[p + 1]; if (m === 0xda || m === 0xd9) break;
+      const L = (b[p + 2] << 8) | b[p + 3]; const seg = b.subarray(p + 4, p + 2 + L);
+      if (m === 0xeb && seg[0] === 0x4a && seg[1] === 0x50) {
+        const en = (seg[2] << 8) | seg[3]; const z = new DataView(seg.buffer, seg.byteOffset + 4).getUint32(0);
+        let payload = seg.subarray(8); if (z > 1) { const lbox = new DataView(payload.buffer, payload.byteOffset).getUint32(0); payload = payload.subarray(lbox === 1 ? 16 : 8); }
+        (groups[en] = groups[en] || []).push({ z, payload });
+      }
+      p += 2 + L;
+    }
+    for (const en of Object.keys(groups)) { const data = concat(...groups[en].sort((a, b2) => a.z - b2.z).map((x) => x.payload)); const boxes = jumbfBoxes(data); if (boxes[0] && boxes[0].label === 'c2pa') return { container: 'JPEG APP11', data, box: boxes[0] }; }
+  }
+  // PNG: caBX chunk
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    let p = 8;
+    while (p + 12 <= b.length) {
+      const L = new DataView(b.buffer, b.byteOffset + p).getUint32(0); const t = utf8dec(b.subarray(p + 4, p + 8));
+      if (t === 'caBX') { const data = b.subarray(p + 8, p + 8 + L); const boxes = jumbfBoxes(data); if (boxes[0] && boxes[0].label === 'c2pa') return { container: 'PNG caBX', data, box: boxes[0] }; }
+      p += 12 + L;
+    }
+  }
+  // Fallback (BMFF/RIFF/PDF/etc.): look for a 'jumb' box whose description label is 'c2pa'
+  const pat = utf8('jumb');
+  for (let i = 4; i + 40 < b.length; i++) {
+    if (b[i] !== pat[0] || b[i + 1] !== pat[1] || b[i + 2] !== pat[2] || b[i + 3] !== pat[3]) continue;
+    const s = i - 4; const boxes = jumbfBoxes(b, s, b.length);
+    if (boxes[0] && boxes[0].label === 'c2pa') return { container: 'embedded JUMBF', data: b, box: boxes[0] };
+  }
+  return null;
+}
+function c2paInspect(fileBytes) {
+  const store = c2paExtractStore(fileBytes);
+  if (!store) return { present: false };
+  const b = store.data; const manifests = store.box.children.filter((x) => x.type === 'jumb');
+  const read = (m) => {
+    const sub = Object.fromEntries((m.children || []).filter((x) => x.type === 'jumb').map((x) => [x.label, x]));
+    const claimBox = sub['c2pa.claim.v2'] || sub['c2pa.claim'];
+    const out = { label: m.label, assertions: sub['c2pa.assertions'] ? sub['c2pa.assertions'].children.filter((x) => x.type === 'jumb').map((x) => x.label) : [] };
+    try {
+      const cb = claimBox.children.find((x) => x.type === 'cbor');
+      const c = cborToPlain(cborDecode(b.subarray(cb.cs, cb.end)));
+      out.claimVersion = sub['c2pa.claim.v2'] ? 2 : 1;
+      out.generator = c.claim_generator || (Array.isArray(c.claim_generator_info) ? c.claim_generator_info.map((g) => [g.name, g.version].filter(Boolean).join(' ')).join(', ') : c.claim_generator_info && c.claim_generator_info.name) || null;
+      out.title = c['dc:title'] || null; out.format = c['dc:format'] || null; out.instanceID = c.instanceID || null;
+    } catch (e) { out.claimError = e.message; }
+    try {
+      const sb = sub['c2pa.signature'].children.find((x) => x.type === 'cbor');
+      let cose = cborDecode(b.subarray(sb.cs, sb.end)); if (cose && cose.tag === 18) cose = cose.value;
+      const prot = cose[0] && cose[0].length ? cborDecode(cose[0]) : new Map(); const unprot = cose[1] || new Map();
+      let x5 = prot.get(33) || unprot.get(33) || unprot.get('x5chain'); if (Array.isArray(x5)) x5 = x5[0];
+      if (x5 instanceof Uint8Array) { const cert = x509Parse(x5); out.signer = cert.subject; out.signerIssuer = cert.issuer; out.signerValidity = `${cert.notBefore.toISOString().slice(0, 10)} – ${cert.notAfter.toISOString().slice(0, 10)}`; }
+      out.hasTimestamp = !!(unprot.get && (unprot.get('sigTst') || unprot.get('sigTst2')));
+    } catch (e) { out.signatureError = e.message; }
+    return out;
+  };
+  const list = manifests.map(read);
+  return { present: true, container: store.container, manifestCount: list.length, active: list[list.length - 1], manifests: list, validated: false };
+}
+function c2paChecks(info) {
+  if (!info) return [chk('c2pa', 'skip', 'C2PA: original file not supplied', '')];
+  if (!info.present) return [chk('c2pa', 'info', 'No C2PA Content Credentials found in the file', 'Absence proves nothing; most files have none, and many platforms strip them.')];
+  const a = info.active || {};
+  return [
+    chk('c2pa', 'info', `C2PA Content Credentials present (${info.manifestCount} manifest${info.manifestCount === 1 ? '' : 's'}, ${info.container})`,
+      [a.generator && `Made with: ${a.generator}`, a.title && `Title: ${a.title}`, a.signer && `Signed by (as claimed in cert): ${a.signer}`, a.signerIssuer && `Cert issuer: ${a.signerIssuer}`, a.assertions && a.assertions.length && `Assertions: ${a.assertions.join(', ')}`].filter(Boolean).join(' · ')),
+    chk('c2pa.validation', 'warn', 'C2PA signatures were read, not validated', 'LightDrawer only reads Content Credentials. Validate with c2patool or contentcredentials.org/verify.'),
+  ];
+}
+
+/* Read Content Credentials from a File/Blob without loading the whole file.
+   JPEG APP11, PNG caBX, and a generic JUMBF scan almost always live near the
+   start, so only the first C2PA_HEAD_BYTES (16 MiB) are read. */
+async function c2paInspectSource(source) {
+  let bytes, scannedAll = true;
+  if (source instanceof Uint8Array) bytes = source;
+  else if (source && typeof source.slice === 'function') {
+    const n = Math.min(source.size, C2PA_HEAD_BYTES);
+    scannedAll = source.size <= C2PA_HEAD_BYTES;
+    bytes = new Uint8Array(await source.slice(0, n).arrayBuffer());
+  } else throw new Error('c2paInspectSource: expected a File, Blob, or Uint8Array');
+  const info = c2paInspect(bytes);
+  if (!scannedAll && !info.present) info.note = 'Looked at the first ' + formatBytes(C2PA_HEAD_BYTES) + ' only; a Content Credentials store later in the file would not be seen.';
+  return info;
+}
+
+/* ---- 80-receipt.js ---- */
+/* Receipt = one ZIP per file: statement.json (what is stamped), proofs, cover page,
+   trust anchors, and a copy of the offline verifier. Hash-only: the original file is
+   never put in the receipt and never leaves the browser. */
+const PROVENANCE_FIELDS = [
+  ['source_url', 'Source URL', 'Where you found it online, if anywhere.'],
+  ['source_archive_url', 'Archived copy URL', 'A perma.cc, Wayback, or Arweave link you made, if any.'],
+  ['collected_at', 'Collected at', 'When you collected it (date and time, with time zone).'],
+  ['collector', 'Collector', 'Name, role, or handle of the person who collected it.'],
+  ['collection_method', 'How you collected it', 'e.g. browser save, screen capture, platform download.'],
+  ['collector_notes', 'Notes', 'Anything a later reviewer should know.'],
+];
+async function buildStatement({ name, size, mediaType, sha256Hex, provenance, c2pa }) {
+  const prov = {};
+  for (const [k] of PROVENANCE_FIELDS) if (provenance && provenance[k] && String(provenance[k]).trim()) prov[k] = String(provenance[k]).trim();
+  const st = {
+    lightdrawer_receipt: '1',
+    about: 'The timestamps in this receipt cover the exact bytes of this statement.json, which records the SHA-256 of the file below.',
+    subject: { name, size, media_type: mediaType || 'application/octet-stream', sha256: sha256Hex },
+  };
+  if (Object.keys(prov).length) st.provenance = Object.assign({ framework: 'Berkeley Protocol on Digital Open Source Investigations (fields are the collector\'s own statements)' }, prov);
+  if (c2pa && c2pa.present) st.c2pa_observed = { present: true, generator: c2pa.active && c2pa.active.generator || null, signer_as_claimed: c2pa.active && c2pa.active.signer || null, validated: false };
+  st.claimed_created_at = new Date().toISOString();
+  const bytes = utf8(JSON.stringify(st, null, 2) + '\n');
+  return { statement: st, bytes, digest: await sha256(bytes) };
+}
+/* stampFn(digestBytes, tsqBytes) -> { ots: { [calendarUrl]: Uint8Array }, tsr: Uint8Array|null, errors: [] } */
+async function makeReceipt({ fileMeta, provenance, c2pa, stampFn, rekor, verifierHtml, trustFiles, fetchFn }) {
+  const s = await buildStatement(Object.assign({}, fileMeta, { provenance, c2pa }));
+  const { tsq, nonceHex } = tsaBuildRequest(s.digest);
+  const res = await stampFn(s.digest, tsq);
+  const errors = (res.errors || []).slice();
+  // OpenTimestamps: merge every calendar answer into one detached proof
+  const root = { msg: s.digest, atts: [], ops: [] }; const cals = [];
+  for (const [cal, bytes] of Object.entries(res.ots || {})) {
+    try { otsMerge(root, await otsParseCalendarResponse(bytes, s.digest)); cals.push(cal); } catch (e) { errors.push(`OpenTimestamps ${cal}: ${e.message}`); }
+  }
+  const otsBytes = cals.length ? otsSerializeDetached(s.digest, root) : null;
+  let tsaResult = null;
+  if (res.tsr) { tsaResult = await tsaVerify(res.tsr, s.digest, TRUST, nonceHex); if (tsaResult.checks.some((c) => c.status === 'fail')) errors.push('RFC 3161 response failed local verification'); }
+  let rekorEntry = null, rekorResult = null;
+  if (rekor) {
+    try { rekorEntry = await rekorCreateEntry(s.bytes, fetchFn); rekorResult = await rekorVerify(rekorEntry, s.bytes, TRUST); }
+    catch (e) { errors.push('Rekor: ' + e.message); }
+  }
+  const index = {
+    lightdrawer_receipt: '1', tool: 'LightDrawer receipt ' + LD_VERSION, made_at_claimed: s.statement.claimed_created_at,
+    statement_sha256: toHex(s.digest), subject: s.statement.subject,
+    proofs: {
+      opentimestamps: otsBytes ? { file: 'proofs/statement.json.ots', calendars: cals, status: 'pending at creation; upgrade after ~1–6 h' } : null,
+      rfc3161: res.tsr ? { file: 'proofs/statement.json.tsr', tsa: 'https://freetsa.org/tsr', gen_time: tsaResult && tsaResult.genTime && tsaResult.genTime.toISOString(), nonce: nonceHex } : null,
+      rekor: rekorEntry ? { file: 'proofs/rekor-entry.json', log: REKOR_URL, uuid: rekorResult && rekorResult.uuid, log_index: rekorResult && rekorResult.logIndex, integrated_time: rekorResult && rekorResult.time && new Date(rekorResult.time * 1000).toISOString() } : null,
+      ct: null,
+    },
+    errors,
+  };
+  const ct = (res.ct && res.ct.status === 'anchored') ? res.ct : ctPendingEntry(toHex(s.digest));
+  index.proofs.ct = {
+    file: 'proofs/ct.json',
+    status: ct.status,
+    hostname: ct.hostname || null,
+    note: ct.status === 'pending'
+      ? 'Waiting for the next certificate-log stamp (about every 6 hours; 15-minute sub-batches).'
+      : 'Anchored in Certificate Transparency logs via a public certificate whose name is the batch root.',
+  };
+  const files = [
+    { name: 'README.html', data: utf8(coverHtml(s.statement, index)) },
+    { name: 'README.txt', data: utf8(coverText(s.statement, index)) },
+    { name: 'statement.json', data: s.bytes },
+    { name: 'receipt.json', data: utf8(JSON.stringify(index, null, 2) + '\n') },
+  ];
+  if (otsBytes) files.push({ name: 'proofs/statement.json.ots', data: otsBytes });
+  if (res.tsr) files.push({ name: 'proofs/statement.json.tsr', data: res.tsr });
+  if (rekorEntry) files.push({ name: 'proofs/rekor-entry.json', data: utf8(JSON.stringify(rekorEntry, null, 2) + '\n') });
+  files.push({ name: 'proofs/ct.json', data: utf8(JSON.stringify(ct, null, 2) + '\n') });
+  for (const [n, d] of Object.entries(trustFiles || {})) files.push({ name: 'trust/' + n, data: d });
+  if (verifierHtml) files.push({ name: 'verify.html', data: verifierHtml });
+  return { zip: zipWrite(files), index, statement: s.statement, statementDigest: s.digest, errors, otsBytes, tsr: res.tsr, rekorEntry };
+}
+/* files: { name: Uint8Array } from zipRead. original: { name, bytes } or null.
+   opts: { lookupBlock, fetchUpgrade } (both optional; omit for fully offline). */
+async function verifyReceipt(files, original, opts = {}) {
+  const out = { sections: [], times: [] };
+  const sec = (title, checks) => { out.sections.push({ title, checks }); return checks; };
+  const stBytes = files['statement.json'];
+  if (!stBytes) { sec('Receipt', [chk('receipt', 'fail', 'No statement.json in this receipt', '')]); return out; }
+  let st; try { st = JSON.parse(utf8dec(stBytes)); } catch (e) { sec('Receipt', [chk('receipt', 'fail', 'statement.json is not valid JSON', e.message)]); return out; }
+  const d = await sha256(stBytes); out.statement = st; out.statementDigestHex = toHex(d);
+  const rc = [chk('statement', st.lightdrawer_receipt === '1' && st.subject && /^[0-9a-f]{64}$/.test(st.subject.sha256) ? 'pass' : 'fail', 'Statement is well-formed', `statement.json SHA-256 ${toHex(d)}`)];
+  if (original) {
+    const src = original.file || original.bytes;
+    const fh = toHex(await sha256Source(src, { onProgress: opts.onHashProgress }));
+    rc.push(chk('file.hash', fh === st.subject.sha256 ? 'pass' : 'fail', fh === st.subject.sha256 ? 'Your file matches the receipt (same SHA-256)' : 'Your file does NOT match the receipt', `file ${fh}`));
+    const origSize = original.file ? original.file.size : (original.size != null ? original.size : original.bytes.length);
+    if (origSize !== st.subject.size) rc.push(chk('file.size', 'warn', 'File size differs from the receipt', `${origSize} vs ${st.subject.size}`));
+  } else rc.push(chk('file.hash', 'skip', 'Original file not supplied, so the file itself was not checked', `Receipt is for SHA-256 ${st.subject.sha256}`));
+  sec('File and statement', rc);
+  // RFC 3161
+  if (files['proofs/statement.json.tsr']) {
+    let nonce = null; try { nonce = JSON.parse(utf8dec(files['receipt.json'])).proofs.rfc3161.nonce; } catch (e) { /* optional */ }
+    const r = await tsaVerify(files['proofs/statement.json.tsr'], d, TRUST, nonce);
+    sec('RFC 3161 timestamp (FreeTSA)', r.checks);
+    if (r.genTime && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'RFC 3161 (FreeTSA)', time: r.genTime });
+  } else sec('RFC 3161 timestamp (FreeTSA)', [chk('tsa', 'skip', 'No RFC 3161 token in this receipt', '')]);
+  // OpenTimestamps
+  if (files['proofs/statement.json.ots']) {
+    let ots = files['proofs/statement.json.ots']; const extra = [];
+    if (opts.fetchUpgrade) {
+      try {
+        const p = await otsParseDetached(ots);
+        if (otsAttestations(p.root).some((a) => a.kind === 'pending') && !otsAttestations(p.root).some((a) => a.kind === 'bitcoin')) {
+          const rep = await otsUpgrade(p.root, opts.fetchUpgrade);
+          for (const x of rep) extra.push(chk('ots.upgrade', /upgraded/.test(x.status) ? 'pass' : 'info', 'Upgrade from ' + x.uri, x.status));
+          const up = otsSerializeDetached(p.digest, p.root);
+          if (!bytesEq(up, ots)) { ots = up; out.upgradedOts = up; }
+        }
+      } catch (e) { extra.push(chk('ots.upgrade', 'warn', 'Could not upgrade proof', e.message)); }
+    }
+    const r = await otsVerify(ots, d, opts.lookupBlock);
+    sec('OpenTimestamps (Bitcoin)', extra.concat(r.checks));
+    if (r.earliest) out.times.push({ source: `Bitcoin block ${r.earliest.height} (OpenTimestamps)`, time: new Date(r.earliest.time * 1000), note: 'block times can be off by up to ~2 hours' });
+  } else sec('OpenTimestamps (Bitcoin)', [chk('ots', 'skip', 'No OpenTimestamps proof in this receipt', '')]);
+  // Certificate Transparency (extra witness; pending until a batch is certified)
+  if (files['proofs/ct.json']) {
+    const extra = [];
+    let ctBytes = files['proofs/ct.json'];
+    if (opts.fetchCtUpgrade) {
+      try {
+        let cur; try { cur = JSON.parse(utf8dec(ctBytes)); } catch (e) { cur = null; }
+        if (!cur || cur.status === 'pending') {
+          const up = await opts.fetchCtUpgrade(toHex(d));
+          if (up) {
+            const ub = typeof up === 'string' ? utf8(up) : (up instanceof Uint8Array ? up : utf8(JSON.stringify(up, null, 2) + '\n'));
+            ctBytes = ub; files['proofs/ct.json'] = ub; out.upgradedCt = ub;
+            extra.push(chk('ct.upgrade', 'pass', 'Fetched the certificate-log inclusion data', ''));
+          } else extra.push(chk('ct.upgrade', 'info', 'Certificate-log stamp not ready yet', 'Try again after the next stamp (about every 6 hours).'));
+        }
+      } catch (e) { extra.push(chk('ct.upgrade', 'warn', 'Could not upgrade the certificate-log proof', e.message)); }
+    }
+    let ctObj; try { ctObj = JSON.parse(utf8dec(ctBytes)); } catch (e) { ctObj = null; }
+    const r = ctObj ? await ctVerify(ctObj, toHex(d), TRUST) : { checks: [chk('ct', 'fail', 'ct.json is not valid JSON', '')], times: [] };
+    extra.push(...r.checks);
+    sec('Certificate Transparency (public certificate log)', extra);
+    for (const tm of (r.times || [])) out.times.push(tm);
+  } else sec('Certificate Transparency (public certificate log)', [chk('ct', 'skip', 'No certificate-log proof in this receipt', '')]);
+  // Rekor
+  if (files['proofs/rekor-entry.json']) {
+    let e; try { e = JSON.parse(utf8dec(files['proofs/rekor-entry.json'])); } catch (err) { e = null; }
+    const r = e ? await rekorVerify(e, stBytes, TRUST) : { checks: [chk('rekor', 'fail', 'rekor-entry.json is not valid JSON', '')] };
+    sec('Sigstore Rekor transparency log', r.checks);
+    if (r.time && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'Sigstore Rekor', time: new Date(r.time * 1000) });
+  }
+  // Provenance (claims, not verified facts)
+  if (st.provenance) sec('Provenance (collector\'s statements)', [chk('prov', 'info', 'Fixed at timestamp time, not independently verified', Object.entries(st.provenance).filter(([k]) => k !== 'framework').map(([k, v]) => `${k}: ${v}`).join(' · '))]);
+  // C2PA
+  let c2 = null; if (original) { try { c2 = await c2paInspectSource(original.file || original.bytes); } catch (e) { c2 = { present: true, error: e.message }; } }
+  sec('C2PA Content Credentials (read only)', c2 && c2.error ? [chk('c2pa', 'warn', 'C2PA data present but unreadable', c2.error)] : c2paChecks(original ? c2 : null));
+  out.c2pa = c2;
+  out.times.sort((a, b) => a.time - b.time);
+  const all = out.sections.flatMap((s) => s.checks);
+  out.verdict = all.some((c) => c.status === 'fail') ? 'fail' : out.times.length ? 'pass' : 'incomplete';
+  return out;
+}
+
+/* ---- 85-cover.js ---- */
+/* Plain-language cover page for a receipt (README.html + README.txt). */
+function coverModel(st, idx) {
+  const p = idx.proofs || {};
+  const proved = [];
+  if (p.rfc3161) proved.push(['RFC 3161 timestamp from FreeTSA (freetsa.org)', p.rfc3161.gen_time ? p.rfc3161.gen_time.replace('T', ' ').replace(/\.\d+Z$/, 'Z').replace('Z', ' UTC') : 'see token', 'Signed by one third-party timestamp authority. Checkable now.']);
+  if (p.opentimestamps) proved.push(['OpenTimestamps → Bitcoin', 'Pending when made', 'Calendars put the hash into a Bitcoin transaction, usually within ~1–6 hours. Upgrade the proof after that; then nobody needs to be trusted except the Bitcoin chain.']);
+  if (p.rekor) proved.push(['Sigstore Rekor public log', p.rekor.integrated_time ? p.rekor.integrated_time.replace('T', ' ').replace(/\.\d+Z$/, 'Z').replace('Z', ' UTC') : '', 'Public, append-only transparency log. Entry index ' + p.rekor.log_index + '. Signed with a throwaway key: shows when, not who.']);
+  if (p.ct) proved.push(['Certificate Transparency (public HTTPS certificate logs)', p.ct.status === 'anchored' ? 'See proofs/ct.json' : 'Pending when made', 'LightDrawer batches fingerprints and names a later certificate after the batch root. Those certificates appear in public Certificate Transparency logs. This is an extra witness, not a replacement for Bitcoin.']);
+  const verify = [
+    ['Check your file', `sha256sum "${st.subject.name}"`, `Must print ${st.subject.sha256}. If not, this receipt is not about your file.`],
+    ['Check the statement', 'sha256sum statement.json', `Must print ${idx.statement_sha256}. Every proof below is about this hash.`],
+  ];
+  if (p.rfc3161) verify.push(['RFC 3161 (OpenSSL)', 'openssl ts -verify -data statement.json -in proofs/statement.json.tsr -CAfile trust/freetsa-cacert.pem -untrusted trust/freetsa-tsa.crt', `Prefer certificates downloaded yourself from https://freetsa.org/files/. Root SHA-256 fingerprint: ${TRUST.rootSha256}.`]);
+  if (p.opentimestamps) verify.push(['OpenTimestamps', 'pip install opentimestamps-client\nots upgrade proofs/statement.json.ots\nots verify -f statement.json proofs/statement.json.ots', 'Or drop statement.json and the .ots file on https://opentimestamps.org. "Pending" just means Bitcoin has not confirmed yet; try again in a few hours. `ots verify` needs a Bitcoin node, or use the website.']);
+  if (p.rekor) verify.push(['Sigstore Rekor', `curl https://rekor.sigstore.dev/api/v1/log/entries/${p.rekor.uuid}`, 'Or search the hash on https://search.sigstore.dev. The entry\'s data.hash.value must equal the statement hash.']);
+  if (p.ct) verify.push(['Certificate Transparency', 'See HOW-IT-WORKS.md: check proofs/ct.json, recompute the Merkle root from digest + path, confirm the certificate SAN encodes that root, then look the hostname up on https://crt.sh', 'Pending means the batch has not been written into a certificate yet. The offline verifier can upgrade this the same way it upgrades an OpenTimestamps proof.']);
+  verify.push(['All at once, offline', 'Open verify.html in any modern browser', 'Drop this ZIP (and optionally the original file). It re-hashes and checks every proof without contacting LightDrawer.']);
+  const limits = [
+    'It proves the file (and this statement) existed no later than the times above. The file may be older.',
+    'It does not prove who made the file, that it is authentic, unedited before stamping, or that what it shows is true.',
+    'Provenance fields are the collector\'s own statements, fixed in time by the stamps, not verified facts.',
+    'Hash only: the file is not stored anywhere by LightDrawer. Keep the original. Lose it and the receipt can no longer be tied to any content. Changing one bit changes the hash.',
+    'FreeTSA is a single authority: you trust its key. Bitcoin anchoring removes that once confirmed. Rekor is run by Sigstore/OpenSSF. The certificate-log stamp depends on Let\'s Encrypt and public CT logs remaining available (crt.sh and other archives keep copies). It is an extra witness, not a replacement for Bitcoin.',
+    'C2PA Content Credentials, if noted, were read but not validated.',
+  ];
+  return { proved, verify, limits };
+}
+function coverHtml(st, idx) {
+  const m = coverModel(st, idx);
+  const row = (cells) => '<tr>' + cells.map((c) => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+  const prov = st.provenance ? Object.entries(st.provenance).map(([k, v]) => row([k, v])).join('') : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Receipt: ${escHtml(st.subject.name)}</title>
+<style>body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#111}h1{font-size:1.6rem;margin:0 0 .25rem}h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid #ddd;padding-bottom:.25rem}code,pre{font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#f4f4f4;border-radius:4px}pre{padding:.6rem;white-space:pre-wrap;word-break:break-all}code{padding:0 .2rem;word-break:break-all}table{border-collapse:collapse;width:100%}td{border-top:1px solid #eee;padding:.4rem .5rem .4rem 0;vertical-align:top}td:first-child{font-weight:600;width:14rem}.box{border:2px solid #111;padding:1rem;border-radius:6px}.muted{color:#555}li{margin:.3rem 0}</style></head><body>
+<h1>LightDrawer receipt</h1><p class="muted">For <strong>${escHtml(st.subject.name)}</strong> (${escHtml(String(st.subject.size))} bytes, ${escHtml(st.subject.media_type)})</p>
+<div class="box"><strong>In one sentence:</strong> a file whose fingerprint (SHA-256) is <code>${escHtml(st.subject.sha256)}</code> existed no later than the times below. That is all this receipt proves.</div>
+<h2>What is proven, and when</h2><table>${m.proved.map(row).join('') || row(['No proofs', '', 'Creation failed; see receipt.json'])}</table>
+<p class="muted">Each proof covers <code>statement.json</code> (SHA-256 <code>${escHtml(idx.statement_sha256)}</code>), which contains the file fingerprint${st.provenance ? ' and the provenance notes below' : ''}.</p>
+${prov ? `<h2>Provenance (collector's statements)</h2><table>${prov}</table>` : ''}
+<h2>What this does not prove</h2><ul>${m.limits.map((l) => `<li>${escHtml(l)}</li>`).join('')}</ul>
+<h2>How to verify without LightDrawer</h2>${m.verify.map(([t, cmd, note]) => `<h3>${escHtml(t)}</h3><pre>${escHtml(cmd)}</pre><p class="muted">${escHtml(note)}</p>`).join('')}
+<h2>Archiving the source</h2><p>LightDrawer does not publish or store files. If the source is a public web page, archive it yourself, e.g. <a href="https://perma.cc">perma.cc</a>, <a href="https://web.archive.org/save">Wayback Machine</a>, or Arweave, and record that link in the provenance fields of your next receipt.</p>
+<h2>Files in this receipt</h2><ul><li><code>statement.json</code>: the exact bytes that were timestamped</li><li><code>proofs/</code>: OpenTimestamps <code>.ots</code>, RFC 3161 <code>.tsr</code>${idx.proofs && idx.proofs.rekor ? ', Rekor entry' : ''}${idx.proofs && idx.proofs.ct ? ', certificate-log proof (ct.json)' : ''}</li><li><code>trust/</code>: copies of the public certificates/keys used (convenience copies; fetch your own)</li><li><code>verify.html</code>: offline verifier</li><li><code>receipt.json</code>: machine-readable index</li></ul>
+<p class="muted">Made with ${escHtml(idx.tool)}. Device clock said ${escHtml(st.claimed_created_at)} (not a proof).</p></body></html>`;
+}
+function coverText(st, idx) {
+  const m = coverModel(st, idx);
+  const L = [];
+  L.push('LIGHTDRAWER RECEIPT', '', `File: ${st.subject.name} (${st.subject.size} bytes)`, `SHA-256: ${st.subject.sha256}`, `Statement SHA-256: ${idx.statement_sha256}`, '');
+  L.push('In one sentence: a file with this fingerprint existed no later than the times below. That is all this receipt proves.', '');
+  L.push('WHAT IS PROVEN, AND WHEN'); for (const [a, b, c] of m.proved) L.push(`- ${a}: ${b}`, `  ${c}`); L.push('');
+  if (st.provenance) { L.push("PROVENANCE (collector's statements)"); for (const [k, v] of Object.entries(st.provenance)) L.push(`- ${k}: ${v}`); L.push(''); }
+  L.push('WHAT THIS DOES NOT PROVE'); for (const l of m.limits) L.push('- ' + l); L.push('');
+  L.push('HOW TO VERIFY WITHOUT LIGHTDRAWER'); for (const [t, cmd, note] of m.verify) L.push(`* ${t}`, cmd.split('\n').map((x) => '    ' + x).join('\n'), '  ' + note, ''); 
+  L.push('LightDrawer does not store or publish files. Archive public sources yourself (perma.cc, web.archive.org/save, Arweave).');
+  return L.join('\n') + '\n';
+}
+
+/* Generated by scripts/build.mjs from trust/. Pinned trust anchors. */
+const TRUST = {
+ "rootPem": "-----BEGIN CERTIFICATE-----\nMIIH/zCCBeegAwIBAgIJAMHphhYNqOmAMA0GCSqGSIb3DQEBDQUAMIGVMREwDwYD\nVQQKEwhGcmVlIFRTQTEQMA4GA1UECxMHUm9vdCBDQTEYMBYGA1UEAxMPd3d3LmZy\nZWV0c2Eub3JnMSIwIAYJKoZIhvcNAQkBFhNidXNpbGV6YXNAZ21haWwuY29tMRIw\nEAYDVQQHEwlXdWVyemJ1cmcxDzANBgNVBAgTBkJheWVybjELMAkGA1UEBhMCREUw\nHhcNMTYwMzEzMDE1MjEzWhcNNDEwMzA3MDE1MjEzWjCBlTERMA8GA1UEChMIRnJl\nZSBUU0ExEDAOBgNVBAsTB1Jvb3QgQ0ExGDAWBgNVBAMTD3d3dy5mcmVldHNhLm9y\nZzEiMCAGCSqGSIb3DQEJARYTYnVzaWxlemFzQGdtYWlsLmNvbTESMBAGA1UEBxMJ\nV3VlcnpidXJnMQ8wDQYDVQQIEwZCYXllcm4xCzAJBgNVBAYTAkRFMIICIjANBgkq\nhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAtgKODjAy8REQ2WTNqUudAnjhlCrpE6ql\nmQfNppeTmVvZrH4zutn+NwTaHAGpjSGv4/WRpZ1wZ3BRZ5mPUBZyLgq0YrIfQ5Fx\n0s/MRZPzc1r3lKWrMR9sAQx4mN4z11xFEO529L0dFJjPF9MD8Gpd2feWzGyptlel\nb+PqT+++fOa2oY0+NaMM7l/xcNHPOaMz0/2olk0i22hbKeVhvokPCqhFhzsuhKsm\nq4Of/o+t6dI7sx5h0nPMm4gGSRhfq+z6BTRgCrqQG2FOLoVFgt6iIm/BnNffUr7V\nDYd3zZmIwFOj/H3DKHoGik/xK3E82YA2ZulVOFRW/zj4ApjPa5OFbpIkd0pmzxzd\nEcL479hSA9dFiyVmSxPtY5ze1P+BE9bMU1PScpRzw8MHFXxyKqW13Qv7LWw4sbk3\nSciB7GACbQiVGzgkvXG6y85HOuvWNvC5GLSiyP9GlPB0V68tbxz4JVTRdw/Xn/XT\nFNzRBM3cq8lBOAVt/PAX5+uFcv1S9wFE8YjaBfWCP1jdBil+c4e+0tdywT2oJmYB\nBF/kEt1wmGwMmHunNEuQNzh1FtJY54hbUfiWi38mASE7xMtMhfj/C4SvapiDN837\ngYaPfs8x3KZxbX7C3YAsFnJinlwAUss1fdKar8Q/YVs7H/nU4c4Ixxxz4f67fcVq\nM2ITKentbCMCAwEAAaOCAk4wggJKMAwGA1UdEwQFMAMBAf8wDgYDVR0PAQH/BAQD\nAgHGMB0GA1UdDgQWBBT6VQ2MNGZRQ0z357OnbJWveuaklzCBygYDVR0jBIHCMIG/\ngBT6VQ2MNGZRQ0z357OnbJWveuakl6GBm6SBmDCBlTERMA8GA1UEChMIRnJlZSBU\nU0ExEDAOBgNVBAsTB1Jvb3QgQ0ExGDAWBgNVBAMTD3d3dy5mcmVldHNhLm9yZzEi\nMCAGCSqGSIb3DQEJARYTYnVzaWxlemFzQGdtYWlsLmNvbTESMBAGA1UEBxMJV3Vl\ncnpidXJnMQ8wDQYDVQQIEwZCYXllcm4xCzAJBgNVBAYTAkRFggkAwemGFg2o6YAw\nMwYDVR0fBCwwKjAooCagJIYiaHR0cDovL3d3dy5mcmVldHNhLm9yZy9yb290X2Nh\nLmNybDCBzwYDVR0gBIHHMIHEMIHBBgorBgEEAYHyJAEBMIGyMDMGCCsGAQUFBwIB\nFidodHRwOi8vd3d3LmZyZWV0c2Eub3JnL2ZyZWV0c2FfY3BzLmh0bWwwMgYIKwYB\nBQUHAgEWJmh0dHA6Ly93d3cuZnJlZXRzYS5vcmcvZnJlZXRzYV9jcHMucGRmMEcG\nCCsGAQUFBwICMDsaOUZyZWVUU0EgdHJ1c3RlZCB0aW1lc3RhbXBpbmcgU29mdHdh\ncmUgYXMgYSBTZXJ2aWNlIChTYWFTKTA3BggrBgEFBQcBAQQrMCkwJwYIKwYBBQUH\nMAGGG2h0dHA6Ly93d3cuZnJlZXRzYS5vcmc6MjU2MDANBgkqhkiG9w0BAQ0FAAOC\nAgEAaK9+v5OFYu9M6ztYC+L69sw1omdyli89lZAfpWMMh9CRmJhM6KBqM/ipwoLt\nnxyxGsbCPhcQjuTvzm+ylN6VwTMmIlVyVSLKYZcdSjt/eCUN+41K7sD7GVmxZBAF\nILnBDmTGJmLkrU0KuuIpj8lI/E6Z6NnmuP2+RAQSHsfBQi6sssnXMo4HOW5gtPO7\ngDrUpVXID++1P4XndkoKn7Svw5n0zS9fv1hxBcYIHPPQUze2u30bAQt0n0iIyRLz\naWuhtpAtd7ffwEbASgzB7E+NGF4tpV37e8KiA2xiGSRqT5ndu28fgpOY87gD3ArZ\nDctZvvTCfHdAS5kEO3gnGGeZEVLDmfEsv8TGJa3AljVa5E40IQDsUXpQLi8G+UC4\n1DWZu8EVT4rnYaCw1VX7ShOR1PNCCvjb8S8tfdudd9zhU3gEB0rxdeTy1tVbNLXW\n99y90xcwr1ZIDUwM/xQ/noO8FRhm0LoPC73Ef+J4ZBdrvWwauF3zJe33d4ibxEcb\n8/pz5WzFkeixYM2nsHhqHsBKw7JPouKNXRnl5IAE1eFmqDyC7G/VT7OF669xM6hb\nUt5G21JE4cNK6NNucS+fzg1JPX0+3VhsYZjj7D5uljRvQXrJ8iHgr/M6j2oLHvTA\nI2MLdq2qjZFDOCXsxBxJpbmLGBx9ow6ZerlUxzws2AWv2pk=\n-----END CERTIFICATE-----\n",
+ "rootSha256": "a6379e7cecc05faa3cbf076013d745e327bbbaa38c0b9af22469d4701d18aabc",
+ "tsaCertPem": "-----BEGIN CERTIFICATE-----\nMIIGYDCCBEigAwIBAgIJAMLphhYNqOnNMA0GCSqGSIb3DQEBDQUAMIGVMREwDwYD\nVQQKEwhGcmVlIFRTQTEQMA4GA1UECxMHUm9vdCBDQTEYMBYGA1UEAxMPd3d3LmZy\nZWV0c2Eub3JnMSIwIAYJKoZIhvcNAQkBFhNidXNpbGV6YXNAZ21haWwuY29tMRIw\nEAYDVQQHEwlXdWVyemJ1cmcxDzANBgNVBAgTBkJheWVybjELMAkGA1UEBhMCREUw\nHhcNMjYwMjE1MTk0NDIyWhcNNDAwMjAyMTk0NDIyWjCCAQsxETAPBgNVBAoMCEZy\nZWUgVFNBMQwwCgYDVQQLDANUU0ExdjB0BgNVBA0MbVRoaXMgY2VydGlmaWNhdGUg\nZGlnaXRhbGx5IHNpZ25zIGRvY3VtZW50cyBhbmQgdGltZSBzdGFtcCByZXF1ZXN0\ncyBtYWRlIHVzaW5nIHRoZSBmcmVldHNhLm9yZyBvbmxpbmUgc2VydmljZXMxGDAW\nBgNVBAMMD3d3dy5mcmVldHNhLm9yZzEkMCIGCSqGSIb3DQEJARYVYnVzaWxlemFz\nQG1haWxib3gub3JnMRIwEAYDVQQHDAlXdWVyemJ1cmcxCzAJBgNVBAYTAkRFMQ8w\nDQYDVQQIDAZCYXllcm4wdjAQBgcqhkjOPQIBBgUrgQQAIgNiAASiFeGhstbLhxix\n0o4UAumNSwHUUlOe3DBvs8fYs580wADW59oqGSCx15bp61TSmXkwLm1JW48XnbLL\nizP6ZtjcvshV3H9uz2bS53sgDXhg1wLbIhAtraC+fHCytHeuVaujggHmMIIB4jAJ\nBgNVHRMEAjAAMB0GA1UdDgQWBBQVwL0m69RdgtFdkyYxL+9wsotGXjAfBgNVHSME\nGDAWgBT6VQ2MNGZRQ0z357OnbJWveuaklzALBgNVHQ8EBAMCBsAwFgYDVR0lAQH/\nBAwwCgYIKwYBBQUHAwgwbAYIKwYBBQUHAQEEYDBeMDMGCCsGAQUFBzAChidodHRw\nOi8vd3d3LmZyZWV0c2Eub3JnL2ZpbGVzL2NhY2VydC5wZW0wJwYIKwYBBQUHMAGG\nG2h0dHA6Ly93d3cuZnJlZXRzYS5vcmc6MjU2MDA3BgNVHR8EMDAuMCygKqAohiZo\ndHRwOi8vd3d3LmZyZWV0c2Eub3JnL2NybC9yb290X2NhLmNybDCByAYDVR0gBIHA\nMIG9MIG6BgMrBQgwgbIwMwYIKwYBBQUHAgEWJ2h0dHA6Ly93d3cuZnJlZXRzYS5v\ncmcvZnJlZXRzYV9jcHMuaHRtbDAyBggrBgEFBQcCARYmaHR0cDovL3d3dy5mcmVl\ndHNhLm9yZy9mcmVldHNhX2Nwcy5wZGYwRwYIKwYBBQUHAgIwOxo5RnJlZVRTQSB0\ncnVzdGVkIHRpbWVzdGFtcGluZyBTb2Z0d2FyZSBhcyBhIFNlcnZpY2UgKFNhYVMp\nMA0GCSqGSIb3DQEBDQUAA4ICAQBrMVS/YfnfMr0ziZnesBUOrDNRrNNgt3IgMNDw\nNhwl6oKWHVIhlYnM/5boljfbpZTAbqvxHI3ztT0/swxQOqTat5qBJRAY/VH1n/T4\nM9uDjSuu3qfh0ZH5PL9ENqoVW44i5NT/znQev2MGXOAHwz9kZwwzz9MFX6hbGhBq\nWa+nlAqb7Y72KFzj33m1OVHxV2Wl4YD9f91bZTFpUEGW4Ktbkmxpf/iGIPaf4WHp\noBW/O6EzofMKYlz4yXyEBh0wRRVyXltLrj+MFHqhe+PsMBllq/dCaO4W/F+AuHEl\nu7aUYWMASelphWAJiUsNMr5HAoeCSSgilqf1CSoWC+k6e4334Fym+Iy4csMex+PG\n4rSdqXJVQ+AWEdRajSPKh7yDfpNkdnO6yqQJ/tSd11XQ5cL0M9jWuCD1zHlgA+u+\nR2cry3yo23jD7qTGLhZqUvXCyWigH30/Q/RXjjDwrc4DJiQ+gRY0FhdTYqlvgMBP\nr4LcJKnNksivdj+kbz7bVSbrBAzRiazK9l841/5XMtP9BvD0hKCpQFvP9PSgCC8E\nQnKqgSe26FSJBaAQcA5TnK8NF4jkbElBxf/zyh7P3IjHso35jtgUWD1/itg9BJWb\nYUwJ4tfILpB2F0wbk1GcZDCDZoyW3Xf3trApz/Zd93gF3joc9Hh9RFveKRzWQ7dd\nUt3egQ==\n-----END CERTIFICATE-----\n",
+ "rekorPubPem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr\nkBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==\n-----END PUBLIC KEY-----\n",
+ "ctLogs": [
+  {
+   "operator": "Google",
+   "name": "Google Argon2026h2",
+   "log_id": "1219ENGn9XfCx+lf1wC/+YLJM1pl4dCzAXMXwMjFaXc=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKjpni/66DIYrSlGK6Rf+e6F2c/28ZUvDJ79N81+gyimAESAyeNZ++TRgjHWg9TVQnKHTSU0T1TtqDupFnSQTIg==",
+   "url": "https://ct.googleapis.com/logs/us1/argon2026h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Google",
+   "name": "Google Argon2027h1",
+   "log_id": "1tWNqdAXU/NqSqDHV0kCr+vH3CzTjNn3ZMgMiRkenwI=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKHRm0H/zUaFA6Idz5cGvGO3tCPQyfGMgJmVBOPyKAP6mGM1IiNXi4CLomOUyYj0YN74p+eGVApFMsM4h/jzCsA==",
+   "url": "https://ct.googleapis.com/logs/us1/argon2027h1/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Google",
+   "name": "Google Xenon2026h2",
+   "log_id": "2AlVO5RPev/IFhlvlE+Fq7D4/F6HVSYPFdEucrtFSxQ=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5Xd4lXEos5XJpcx6TOgyA5Z7/C4duaTbQ6C9aXL5Rbqaw+mW1XDnDX7JlRUninIwZYZDU9wRRBhJmCVopzwFvw==",
+   "url": "https://ct.googleapis.com/logs/eu1/xenon2026h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Google",
+   "name": "Google Xenon2027h1",
+   "log_id": "RMK9DOkUDmSlyUoBkwpaobs1lw4A7hEWiWgqHETXtWY=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/6WcA4VRSljIfTdY48+pFRLLtLrmTb88cGDdl8Gv3E2LduG4jgJ3AK5iNMFGhpbRRLi5B3rPlBaXVywuR5IFDg==",
+   "url": "https://ct.googleapis.com/logs/eu1/xenon2027h1/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Cloudflare",
+   "name": "Cloudflare Nimbus2026",
+   "log_id": "yzj3FYl8hKFEX1vB3fvJbvKaWc1HCmkFhbDLFMMUWOc=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2FxhT6xq0iCATopC9gStS9SxHHmOKTLeaVNZ661488Aq8tARXQV+6+jB0983v5FkRm4OJxPqu29GJ1iG70Ahow==",
+   "url": "https://ct.cloudflare.com/logs/nimbus2026/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-01-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Cloudflare",
+   "name": "Cloudflare Nimbus2027",
+   "log_id": "TGPcmOWcHauI9h6KPd6uj6tEozd7X5uUw/uhnPzBviY=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYjd/jE0EoAhNBbfcNhrTb7F0x10KZK8r2SDjx1GdjJ75hJrHx2OCQ+BXRjXi+czoREN1u0j9cWl8d6OoPMPogQ==",
+   "url": "https://ct.cloudflare.com/logs/nimbus2027/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2028-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Wyvern2026h2",
+   "log_id": "wjF+V0UZo0XufzjespBB68fCIVoiv3/Vta12mtkOUs0=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEenPbSvLeT+zhFBu+pqk8IbhFEs16iCaRIFb1STLDdWzL6XwTdTWcbOzxMTzB3puME5K3rT0PoZyPSM50JxgjmQ==",
+   "url": "https://wyvern.ct.digicert.com/2026h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Wyvern2027h1",
+   "log_id": "ABpdGhwtk3W2SFV4+C9xoa5u7zl9KXyK4xV7yt7hoB4=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEastxYj1mntGuyv74k4f+yaIx+ZEzlSJ+iVTYWlw8SpSKJ4TfxYWuBhnETlhpyG/5seJn0mOSnVgXsZ1JRflI7g==",
+   "url": "https://wyvern.ct.digicert.com/2027h1/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Wyvern2027h2",
+   "log_id": "N6oHzCFvLm2RnHCdJNj3MbAPKxR8YhzAkaX6GoTYFt0=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuOg8hcgaYT/MShxpag2Hige0zsLzz8vOLZXp6faCdzM+Mn/njyU9ROAuwDxuu88/Grxn46kmehdOKVDFexbdSg==",
+   "url": "https://wyvern.ct.digicert.com/2027h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-07-01T00:00:00Z",
+    "end_exclusive": "2028-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Sphinx2026h2",
+   "log_id": "lE5Dh/rswe+B8xkkJqgYZQHH0184AgE/cmd9VTcuGdg=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEquD0JkRQT/2inuaA4HC1sc6UpfiXgURVQmQcInmnZFnTiZMhZvsJgWAfYlU0OIykOC6slQzr7U9kvEVC9wZ6zQ==",
+   "url": "https://sphinx.ct.digicert.com/2026h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Sphinx2027h1",
+   "log_id": "RqI5Z8YNtkaHxm89+ZmUdpOmphEghFfVVefj0KHZtkY=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvirIq1XPwgwG7BnbMh2zoUbEt+T8z8XAtg9lo8jma+aaTQl8iVCypUFXtLpt4/SHaoUzbvcjDX/6B1IbL3OoIQ==",
+   "url": "https://sphinx.ct.digicert.com/2027h1/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "DigiCert",
+   "name": "DigiCert Sphinx2027h2",
+   "log_id": "H7D4qS2K3aEhd2wF4qouFbrLxitlOTaVV2qqtS4R0R0=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUCe23M889mAsUVeTTBcNsAmP374ZWQboLdR8RdGwM3VZ6P/sDwhrL7wK4zrXPh3HwLDDLxDjvRBeivUSbpZSwA==",
+   "url": "https://sphinx.ct.digicert.com/2027h2/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-07-01T00:00:00Z",
+    "end_exclusive": "2028-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Mammoth2026h2",
+   "log_id": "lLHBirDQV8R74KwEDh8svI3DdXJ7yVHyClJhJoY7pzw=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7INh8te0u+TkO+vIY3WYz2GQYxQ9XyLfdLpQp1ibaX3mY4lt2ddRhD/4AtjI/8KXceV+J/VysY8kJ1cKDXTAtg==",
+   "url": "https://mammoth2026h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "readonly",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Sabre2026h2",
+   "log_id": "H1bRq5RwSkHdP+r99GmTVTAsFDG/5hNGCJ//rnldzC8=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzjXK7DkHgtp3J4bk8n7F3Djym6mrjKfA7YMePmobwPCVVroyM0x1fAkH6eE+ZTVj8Em+ctGqna99CMS0jVk9cw==",
+   "url": "https://sabre2026h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "readonly",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Elephant2026h2",
+   "log_id": "r2eIO1ewTt2Pptl+9i6o64EKx3Fg8CReVdYML+eFhzo=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEO/t4Uwkoou78zkCchh9tfAKbIUJmbOoUAb8szD8StnnHFKAVY5kq1Ljs8YD7CfzdD7xcVjmQYpbtNUhxRMRtmA==",
+   "url": "https://elephant2026h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Elephant2027h1",
+   "log_id": "YEyar3p/d18B1Ab8kg3ImesLHH34yVIb+voXdzuXi8k=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4fu36JygUwaaVO+ddWJ97FJZlA5SjPLmT+RHwg0pavkIrbT1b5LNQrsaEw0CoGraf7BkzKZf7PC8gYAScw2woA==",
+   "url": "https://elephant2027h1.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Elephant2027h2",
+   "log_id": "okkM3NuOM6QAMhdg1tTVGiA2GR6nfZaL4mqKAPb///c=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECTPhpJnRFroRRpP/1DdAns+PrnmUywtqIV+EeL4Jg8zKouoW7kuAkYo+kZeoHtyK7CBhflIlMk7T2Qrn4w/t8g==",
+   "url": "https://elephant2027h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-07-01T00:00:00Z",
+    "end_exclusive": "2028-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Tiger2026h2",
+   "log_id": "yKPEf8ezrbk1awE/anoSbeM6TkOlxkb5l605dZkdz5o=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEfJFUD/FRkonvZIA9ZT1J3yvA4EpSp3innbIVpMTDR1oCe5vguapheQ7wYiWaCES1EL1B+2BEC+P5bUfwF44lnA==",
+   "url": "https://tiger2026h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-07-01T00:00:00Z",
+    "end_exclusive": "2027-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Tiger2027h1",
+   "log_id": "HJ9oLOn68EVpUPgbloqH3dsyENhM5siy44JSSsTPWZ8=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmMQofpsDjCVYzF4jXdFWM/ioYBJIPcsQQrNAHE6v4lOsADoI+/jN1lph8x4K3NgnXDXwmyJcFwRYgVOBMhaYhA==",
+   "url": "https://tiger2027h1.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-01-01T00:00:00Z",
+    "end_exclusive": "2027-07-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "Sectigo",
+   "name": "Sectigo Tiger2027h2",
+   "log_id": "A4AqwmL24F4D+Lxve5hRMk/Xaj31t1lRdeIi+46b1fY=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb0AgkemhsPmYe1goCSy5ncf2lG9vtK6f+SzODKJMYEgPOT+z93cUEKM1EaTuo09rozfdqhjeihIl25y9A3JhyQ==",
+   "url": "https://tiger2027h2.ct.sectigo.com/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2027-07-01T00:00:00Z",
+    "end_exclusive": "2028-01-01T00:00:00Z"
+   }
+  },
+  {
+   "operator": "TrustAsia",
+   "name": "TrustAsia log2026a",
+   "log_id": "dNudWPfUfp39eHoWKpkcGM9pjafHKZGMmhiwRQ26RLw=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEp056yaYH+f907JjLSeEAJLNZLoP9wHA1M0xjynSDwDxbU0B8MR81pF8P5O5PiRfoWy7FrAAFyXY3RZcDFf9gWQ==",
+   "url": "https://ct2026-a.trustasia.com/log2026a/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2025-12-24T00:00:00Z",
+    "end_exclusive": "2027-01-08T00:00:00Z"
+   }
+  },
+  {
+   "operator": "TrustAsia",
+   "name": "TrustAsia log2026b",
+   "log_id": "Jbfv3qETAZPtkweXcKoyKiZiDeNayKp8dRl94LGp4GU=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDxKMqebj7GLu31jIUOYmcHYQtwQ5s6f4THM7wzhaEgBM4NoOFopFMgoxqiLHnX0FU8eelOqbV0a/T6R++9/6hQ==",
+   "url": "https://ct2026-b.trustasia.com/log2026b/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2025-12-24T00:00:00Z",
+    "end_exclusive": "2027-01-08T00:00:00Z"
+   }
+  },
+  {
+   "operator": "TrustAsia",
+   "name": "TrustAsia HETU2027",
+   "log_id": "7drrgVxjITRJtHvlB3kFq9DZMUfCesUUazvFjkPptsc=",
+   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE14jG8D9suqIVWPtTNOL33uXKZ4mUnnOMrIwOWeZU7GtoDRCWIXfy/9/SC8lTAbtP2NOP4wjIufAk6f64sY4DWg==",
+   "url": "https://hetu2027.trustasia.com/hetu2027/",
+   "mmd": 86400,
+   "state": "usable",
+   "temporal_interval": {
+    "start_inclusive": "2026-12-25T00:00:00Z",
+    "end_exclusive": "2028-01-08T00:00:00Z"
+   }
+  }
+ ],
+ "isrgRoots": [
+  {
+   "name": "isrg-root-x1.pem",
+   "pem": "-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\nWhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\nZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\nMTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\nh77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\nA5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\nT8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\nB5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\nB5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\nKBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\nOlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\njh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\nqHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\nrU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\nHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\nhkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\nubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\nNFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\nORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\nTkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\njNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\noyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\nmRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\nemyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n-----END CERTIFICATE-----\n"
+  },
+  {
+   "name": "isrg-root-x2.pem",
+   "pem": "-----BEGIN CERTIFICATE-----\nMIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\nCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\nR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00\nMDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT\nZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw\nEAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW\n+1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9\nItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T\nAQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI\nzj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\ntL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n/q4AaOeMSQ+2b1tbFfLn\n-----END CERTIFICATE-----\n"
+  }
+ ]
+};
+const TRUST_FILES = { 'freetsa-cacert.pem': utf8(TRUST.rootPem), 'freetsa-tsa.crt': utf8(TRUST.tsaCertPem), 'rekor.sigstore.dev.pub': utf8(TRUST.rekorPubPem) };
+
+/* Receipt maker UI (served by the Worker's static assets). */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let file = null, fileHash = null, c2pa = null, cfg = { turnstileSiteKey: '' }, tsToken = null, tsWidget = null;
+  function friendlyTime(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
+    } catch (e) { return String(iso); }
+  }
+  // provenance form
+  for (const [k, label, help] of PROVENANCE_FIELDS) {
+    const w = document.createElement('div'); if (k === 'collector_notes' || k === 'source_url') w.className = 'wide';
+    const l = document.createElement('label'); l.htmlFor = 'p_' + k; l.textContent = label; const s = document.createElement('small'); s.textContent = help; l.append(s);
+    const i = document.createElement(k === 'collector_notes' ? 'textarea' : 'input'); i.id = 'p_' + k; if (k === 'collected_at') i.placeholder = new Date().toISOString();
+    w.append(l, i); $('prov').append(w);
+  }
+  fetch('/api/config').then((r) => r.json()).then((c) => { cfg = c; if (c.turnstileSiteKey) loadTurnstile(); }).catch(() => {});
+  function loadTurnstile() {
+    window.onTurnstileLoad = () => { tsWidget = window.turnstile.render('#turnstile', { sitekey: cfg.turnstileSiteKey, callback: (t) => { tsToken = t; }, 'expired-callback': () => { tsToken = null; } }); };
+    const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'; s.async = true; document.head.append(s);
+  }
+  const drop = $('drop'), input = $('file');
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
+  input.addEventListener('change', () => input.files[0] && pick(input.files[0]));
+  async function pick(f) {
+    file = f; $('status').textContent = 'Preparing a fingerprint…'; $('go').disabled = true; $('result').textContent = '';
+    try {
+      fileHash = toHex(await sha256Source(f, {
+        onProgress(done, total) {
+          if (!total) return;
+          const pct = Math.min(100, Math.floor((done * 100) / total));
+          $('status').textContent = total > SHA256_FILE_CHUNK
+            ? `Preparing a fingerprint… ${pct}% (${formatBytes(done)} of ${formatBytes(total)})`
+            : 'Preparing a fingerprint…';
+        },
+      }));
+      try { c2pa = await c2paInspectSource(f); } catch (e) { c2pa = { present: true, error: e.message }; }
+      $('fileinfo').hidden = false; $('hash').textContent = fileHash; $('size').textContent = `${f.size.toLocaleString()} bytes · ${f.name}`;
+      $('c2pa').textContent = !c2pa.present ? 'None found' : c2pa.error ? 'Present but could not be read: ' + c2pa.error : `Found (${c2pa.manifestCount}): ${[c2pa.active.generator, c2pa.active.signer && 'signer ' + c2pa.active.signer].filter(Boolean).join(' · ')}. Read only — not independently checked.`;
+      drop.classList.add('has-file');
+      drop.querySelector('strong').textContent = f.name; $('status').textContent = ''; $('go').disabled = false;
+    } catch (e) {
+      $('status').textContent = '';
+      $('result').textContent = '';
+      const d = document.createElement('div'); d.className = 'err'; d.textContent = 'Could not read that file: ' + e.message;
+      $('result').append(d); $('go').disabled = true;
+    }
+  }
+  async function stamp(digestBytes, tsq) {
+    const r = await fetch('/api/stamp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ digest: toHex(digestBytes), tsq: toB64(tsq), turnstile: tsToken }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'stamp proxy HTTP ' + r.status);
+    const ots = {}; for (const [k, v] of Object.entries(j.ots || {})) ots[k] = fromB64(v);
+    return { ots, tsr: j.tsr ? fromB64(j.tsr) : null, errors: j.errors || [] };
+  }
+  $('go').addEventListener('click', async () => {
+    if (cfg.turnstileSiteKey && !tsToken) { $('status').textContent = 'Please complete the check above first.'; return; }
+    $('go').disabled = true; $('status').textContent = 'Recording the fingerprint with independent witnesses…'; $('result').textContent = '';
+    try {
+      const prov = {}; for (const [k] of PROVENANCE_FIELDS) prov[k] = $('p_' + k).value;
+      const verifierHtml = new Uint8Array(await (await fetch('/verify.html')).arrayBuffer());
+      const rc = await makeReceipt({ fileMeta: { name: file.name, size: file.size, mediaType: file.type, sha256Hex: fileHash }, provenance: prov, c2pa: c2pa && !c2pa.error ? c2pa : null, stampFn: stamp, rekor: $('rekor').checked, verifierHtml, trustFiles: TRUST_FILES });
+      const box = document.createElement('div'); const good = rc.otsBytes || rc.tsr; box.className = good ? 'ok' : 'err';
+      const h = document.createElement('strong'); h.textContent = good ? 'Your receipt is ready.' : 'No time record could be obtained.'; box.append(h);
+      const ul = document.createElement('ul');
+      const add = (t) => { const li = document.createElement('li'); li.textContent = t; ul.append(li); };
+      if (rc.index.proofs.rfc3161) add('An independent timestamp authority recorded it on ' + friendlyTime(rc.index.proofs.rfc3161.gen_time) + '.');
+      if (rc.index.proofs.opentimestamps) add('Bitcoin confirmation usually finishes within a few hours. When you check the receipt later, you can look up the latest confirmation.');
+      if (rc.index.proofs.ct) add(rc.index.proofs.ct.status === 'anchored' ? 'A public certificate-log record is ready.' : 'A public certificate-log record is on the way, usually within about four hours. You can refresh it later when you check the receipt.');
+      if (rc.index.proofs.rekor) add('Published on the public transparency log (entry #' + rc.index.proofs.rekor.log_index + ').');
+      for (const e of rc.errors) add('Problem: ' + e);
+      box.append(ul);
+      if (good) {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rc.zip], { type: 'application/zip' })); a.download = file.name + '.lightdrawer-receipt.zip'; a.textContent = 'Download ' + a.download; box.append(a);
+        a.click();
+      }
+      $('result').append(box); $('status').textContent = '';
+    } catch (e) { $('status').textContent = ''; const d = document.createElement('div'); d.className = 'err'; d.textContent = 'Something went wrong: ' + e.message; $('result').append(d); }
+    finally { $('go').disabled = false; if (tsWidget !== null && window.turnstile) { window.turnstile.reset(tsWidget); tsToken = null; } }
+  });
+})();
+

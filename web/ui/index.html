@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F2EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1A1814" media="(prefers-color-scheme: dark)">
+<title>LightDrawer — prove a file existed, unchanged</title>
+<meta name="description" content="Prove this file existed, unchanged, at this time — and let anyone check it without trusting us. Your file never leaves your device.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+<meta property="og:type" content="website">
+<meta property="og:title" content="LightDrawer — prove a file existed, unchanged">
+<meta property="og:description" content="Prove this file existed, unchanged, at this time — and let anyone check it without trusting us. Your file never leaves your device.">
+<meta property="og:image" content="https://lightdrawer.org/og-image.png">
+<meta property="og:url" content="https://lightdrawer.org/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LightDrawer — prove a file existed, unchanged">
+<meta name="twitter:description" content="Prove this file existed, unchanged, at this time — and let anyone check it without trusting us.">
+<meta name="twitter:image" content="https://lightdrawer.org/og-image.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#drop">Skip to file drop</a>
+<header class="top">
+  <a class="brand" href="/" aria-label="LightDrawer home">
+    <svg class="logo-mark" viewBox="0 0 128 128" width="36" height="36" aria-hidden="true"><defs><radialGradient id="ldGlow" cx="64" cy="64" r="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFF1B8"/><stop offset="1" stop-color="#FFF1B8" stop-opacity="0"/></radialGradient></defs><circle cx="64" cy="64" r="22" fill="url(#ldGlow)" opacity=".55"/><g fill="none" stroke-linecap="round" stroke-width="7"><path d="M56 118 H40 A30 30 0 0 1 10 88 V40 A30 30 0 0 1 40 10 H88 A30 30 0 0 1 118 40 V88 A30 30 0 0 1 88 118 H72" stroke="currentColor"/><path d="M56 102 H46 A20 20 0 0 1 26 82 V46 A20 20 0 0 1 46 26 H82 A20 20 0 0 1 102 46 V82 A20 20 0 0 1 82 102 H72" stroke="currentColor"/><path d="M56 86 H52 A10 10 0 0 1 42 76 V52 A10 10 0 0 1 52 42 H76 A10 10 0 0 1 86 52 V76 A10 10 0 0 1 76 86 H72" stroke="#C9A227"/></g><circle cx="64" cy="64" r="11" fill="none" stroke="#C9A227" stroke-width="4"/><path d="M64 57 V64 L69 68" fill="none" stroke="#C9A227" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M64 86 V122" stroke="#C9A227" stroke-width="5" stroke-linecap="round"/></svg>
+    <span class="wordmark"><span class="light">Light</span><span class="drawer">Drawer</span></span>
+  </a>
+  <nav aria-label="Primary">
+    <a href="/" aria-current="page">Make a receipt</a>
+    <a href="/verify.html">Check a receipt</a>
+  </nav>
+</header>
+
+<main>
+<section class="hero">
+  <h1>Prove this file existed, unchanged, at this time</h1>
+  <p class="promise">— and let anyone check it without trusting us.</p>
+  <p class="privacy">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span><strong>Your file never leaves your device.</strong> Only a fingerprint — a short unique code of the file — is sent to independent witnesses.</span>
+  </p>
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Drop a file here or click to choose">
+    <svg class="drop-icon" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+      <rect x="10" y="6" width="22" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M32 20h6a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H16a3 3 0 0 1-3-3v-6" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M24 16v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M18 24l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <strong>Drop a file here or click to choose</strong>
+    <span class="mut">Photos, videos, documents — any file. It stays on this device.</span>
+    <input type="file" id="file">
+  </div>
+  <dl id="fileinfo" hidden>
+    <dt>Fingerprint</dt><dd><code id="hash"></code></dd>
+    <dt>Size</dt><dd id="size"></dd>
+    <dt>Built-in credentials</dt><dd id="c2pa"></dd>
+  </dl>
+
+  <details class="panel">
+    <summary>Add a note <span class="mut-inline">(optional)</span></summary>
+    <p class="mut">Where it came from, when you collected it, who collected it. Notes are saved with the receipt, but they are still your own words. Leave this blank for a simple receipt.</p>
+    <div id="prov" class="grid"></div>
+  </details>
+
+  <div class="included">
+    <h2>Independent witnesses, included automatically</h2>
+    <ul class="witness-list">
+      <li>
+        <strong>Bitcoin</strong>
+        <span>A public record that anyone can look up later. Confirmation usually finishes within a few hours.</span>
+      </li>
+      <li>
+        <strong>A timestamp authority</strong>
+        <span>An independent time record you can check right away.</span>
+      </li>
+      <li>
+        <strong>Public certificate logs</strong>
+        <span>Another public internet record, usually ready within about four hours.</span>
+      </li>
+    </ul>
+    <label class="opt"><input type="checkbox" id="rekor"> Also publish the fingerprint on a public transparency log. <span class="warn">This is public and permanent — anyone can see that this fingerprint was recorded.</span></label>
+  </div>
+
+  <div id="turnstile"></div>
+  <div class="actions">
+    <button id="go" disabled>Get your receipt</button>
+    <span id="status" class="mut" role="status" aria-live="polite"></span>
+  </div>
+  <div id="result" role="status" aria-live="polite"></div>
+</section>
+
+<section class="how" aria-labelledby="how-title">
+  <h2 id="how-title">How it works</h2>
+  <ol class="how-steps">
+    <li>
+      <svg viewBox="0 0 48 48" width="40" height="40" aria-hidden="true">
+        <rect x="12" y="8" width="24" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M24 18v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M18 26l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h3>Drop your file</h3>
+      <p>It is read only on your device. The file itself is never uploaded or stored.</p>
+    </li>
+    <li>
+      <svg viewBox="0 0 48 48" width="40" height="40" aria-hidden="true">
+        <rect x="10" y="8" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M18 20h12M18 26h12M18 32h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <h3>Get your receipt</h3>
+      <p>Download a small receipt to keep with the original file — like a time-stamped ticket.</p>
+    </li>
+    <li>
+      <svg viewBox="0 0 48 48" width="40" height="40" aria-hidden="true">
+        <circle cx="24" cy="24" r="14" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M16 24l5 5 11-11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h3>Anyone can check it</h3>
+      <p>They do not need an account, and they do not have to trust us. The receipt includes its own checker.</p>
+    </li>
+  </ol>
+</section>
+
+<section class="who" aria-labelledby="who-title">
+  <h2 id="who-title">Who it is for</h2>
+  <ul class="who-grid">
+    <li>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect x="6" y="7" width="20" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 12h20M10 17h8M10 21h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <strong>Journalists</strong>
+      <span>Keep a dated copy of a photo, video, or document you collected.</span>
+    </li>
+    <li>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect x="4" y="11" width="24" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="18" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11l2-4h4l2 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Photographers</strong>
+      <span>Show that an image existed, unchanged, on a given day.</span>
+    </li>
+    <li>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><path d="M6 26V14l10-8 10 8v12H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M13 26v-8h6v8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <strong>Small businesses</strong>
+      <span>Date contracts, invoices, or designs you may need to point back to.</span>
+    </li>
+    <li>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><circle cx="10" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 22c2-5 14-5 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 9l5 3-8 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Artists</strong>
+      <span>Stamp a work-in-progress or finished piece without giving the file away.</span>
+    </li>
+    <li>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><path d="M16 5l11 5v7c0 7-5 11-11 13C10 28 5 24 5 17V10l11-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M11 16l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Insurance records</strong>
+      <span>Document damage or belongings so you can show when the photos were taken.</span>
+    </li>
+  </ul>
+</section>
+
+<section class="faq" aria-labelledby="faq-title">
+  <h2 id="faq-title">Common questions</h2>
+  <details>
+    <summary>Is my file uploaded?</summary>
+    <p>No. Your file never leaves your device. LightDrawer only uses a fingerprint — a short unique code of that exact file — so witnesses can record that it existed.</p>
+  </details>
+  <details>
+    <summary>What do I get?</summary>
+    <p>A receipt you download and keep with the original file. It holds the time records and a checker page that works even without the internet.</p>
+  </details>
+  <details>
+    <summary>How does someone check it?</summary>
+    <p>They open the checker included in the receipt (or use <a href="/verify.html">Check a receipt</a> on this site), drop in the receipt and the original file, and see whether the file still matches and when it was recorded.</p>
+  </details>
+  <details>
+    <summary>Does it cost anything?</summary>
+    <p>No. LightDrawer is free. If you would like to help keep it running, you can <a href="https://paypal.me/josephball" rel="noopener">support it here</a>.</p>
+  </details>
+  <details>
+    <summary>What if LightDrawer disappears?</summary>
+    <p>The receipt still works. It includes its own checker, and the time records live on independent public systems that do not depend on us.</p>
+  </details>
+</section>
+
+<details class="tech">
+  <summary>Technical details</summary>
+  <p>The fingerprint is a SHA-256 hash, computed in 4&nbsp;MB chunks so large videos stay out of memory. The receipt is a ZIP containing <code>statement.json</code> (the fingerprint plus any notes), an OpenTimestamps Bitcoin proof, a FreeTSA RFC&nbsp;3161 timestamp, a certificate-transparency proof, a plain-language cover page, and a copy of <code>verify.html</code>.</p>
+  <p>A receipt proves that a file with this fingerprint existed <em>no later than</em> the stamped times. It does not prove who made the file, that it is genuine or unedited before you stamped it, or that its content is true.</p>
+  <p>Optional notes follow Berkeley Protocol–style fields and remain the collector’s own statements. Built-in Content Credentials (C2PA) are read, not validated. Publishing to Sigstore Rekor is off by default because that log is public and permanent.</p>
+  <p>For a public web source, archive it yourself with <a href="https://perma.cc">perma.cc</a>, <a href="https://web.archive.org/save">the Wayback Machine</a>, or Arweave, then paste that link in the notes.</p>
+  <p>A longer, precise walkthrough is in <a href="https://github.com/desynced/lightdrawer/blob/main/HOW-IT-WORKS.md">HOW-IT-WORKS</a> on GitHub.</p>
+</details>
+</main>
+
+<footer>No accounts. No file storage. Only fingerprints are sent to independent witnesses. <a href="https://paypal.me/josephball" rel="noopener">Support LightDrawer</a>.</footer>
+<script src="/app.js"></script>
+</body>
+</html>

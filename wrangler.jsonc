@@ -1,0 +1,55 @@
+// LightDrawer receipts: Workers + Static Assets.
+// Template for self-hosters. Production deploy uses gitignored wrangler.production.jsonc:
+//   wrangler deploy -c wrangler.production.jsonc
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lightdrawer",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // Only /api/* runs the Worker; everything else is served straight from static assets.
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    // Turnstile site key is NOT listed here — do not commit a real value.
+    // Preferred: printf '%s' '<site-key>' | wrangler secret put TURNSTILE_SITE_KEY
+    // Or add "TURNSTILE_SITE_KEY" only in a private deploy config (e.g. wrangler.production.jsonc).
+    // Matching verifier secret: wrangler secret put TURNSTILE_SECRET
+    // Until TURNSTILE_SECRET is set, /api/stamp skips the human check (local/dev).
+    // GET /api/config returns the site key at runtime so static files never hard-code it.
+    // Staging ACME by default. Production requires CT_PRODUCTION=1 and a production directory.
+    "ACME_DIRECTORY": "https://acme-staging-v02.api.letsencrypt.org/directory",
+    "CT_HOSTNAME_SUFFIX": "ct.lightdrawer.org",
+    "CT_SUB_BATCH_MS": "900000",
+    "CT_ANCHOR_EVERY_MS": "21600000",
+    "CT_MAX_SANS": "100"
+  },
+  "d1_databases": [
+    {
+      "binding": "CT_DB",
+      "database_name": "lightdrawer-ct",
+      // Replace with your own: wrangler d1 create lightdrawer-ct
+      "database_id": "<your-d1-database-id>"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  // Per-location, approximate limits (Workers Rate Limiting binding). Pair with a WAF
+  // rate-limiting rule on /api/* for a hard edge cap; see README.
+  "ratelimits": [
+    { "name": "STAMP_LIMITER", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
+    { "name": "UPGRADE_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  // Add custom-domain routes when you want the Worker on your own domain, e.g.:
+  // "routes": [
+  //   { "pattern": "example.com", "custom_domain": true },
+  //   { "pattern": "www.example.com", "custom_domain": true }
+  // ],
+  "workers_dev": true,
+  "send_metrics": false
+}

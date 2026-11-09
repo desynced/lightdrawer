@@ -1,0 +1,38 @@
+import asyncio, zipfile, os
+# Run from the repo root with `npm run dev` already serving http://127.0.0.1:8787
+from playwright.async_api import async_playwright
+os.makedirs('build/e2e', exist_ok=True)
+FX=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'c2pa-sample-CA.jpg')
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch()
+        pg = await b.new_page(viewport={'width':1100,'height':900}, accept_downloads=True)
+        errs=[]; pg.on('console', lambda m: errs.append(m.text) if m.type=='error' else None); pg.on('pageerror', lambda e: errs.append(str(e)))
+        await pg.goto('http://127.0.0.1:8787/')
+        await pg.set_input_files('#file', FX)
+        await pg.wait_for_function("document.getElementById('hash').textContent.length==64")
+        print('hash', await pg.text_content('#hash')); print('c2pa', await pg.text_content('#c2pa'))
+        await pg.fill('#p_source_url','https://example.org/post/123')
+        await pg.fill('#p_collected_at','2026-11-09T07:50:00-06:00')
+        await pg.fill('#p_collector','Test collector')
+        await pg.fill('#p_collection_method','Browser download, Chrome')
+        await pg.fill('#p_collector_notes','E2E test of LightDrawer receipt prototype.')
+        async with pg.expect_download(timeout=60000) as dl:
+            await pg.click('#go')
+        d = await dl.value; path='build/e2e/receipt.zip'; await d.save_as(path)
+        await pg.wait_for_selector('#result .ok, #result .err')
+        print('result:', (await pg.text_content('#result'))[:400])
+        await pg.screenshot(path='build/e2e/maker.png', full_page=True)
+        z=zipfile.ZipFile(path); print(z.namelist()); z.extractall('build/e2e/x')
+        v = await b.new_page(viewport={'width':1100,'height':900})
+        v.on('pageerror', lambda e: errs.append('verify: '+str(e)))
+        await v.goto('file://'+os.path.abspath('build/e2e/x/verify.html'))
+        await v.set_input_files('#inReceipt', path); await v.set_input_files('#inFile', FX)
+        await v.check('#online'); await v.click('#go')
+        await v.wait_for_selector('.verdict', timeout=30000)
+        print('verify:', (await v.text_content('.verdict'))[:300])
+        await v.screenshot(path='build/e2e/verify.png', full_page=True)
+        c = await b.new_page(viewport={'width':1000,'height':900}); await c.goto('file://'+os.path.abspath('build/e2e/x/README.html')); await c.screenshot(path='build/e2e/cover.png', full_page=True)
+        print('errors:', errs)
+        await b.close()
+asyncio.run(main())
