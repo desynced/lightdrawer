@@ -112,11 +112,50 @@ The committed `wrangler.jsonc` is a template with placeholders (empty Turnstile 
 |---|---|---|
 | Site (`index.html`, `app.js`, `verify.html`) | **Cloudflare Workers Static Assets** | Static; `_headers` sets CSP and other security headers |
 | Hashing, statement, ZIP, receipt assembly, local proof checks | **User's browser** (WebCrypto) | File bytes never leave the device |
-| `POST /api/stamp` | **Cloudflare Worker** (`src/worker.js`) | Forwards the 32-byte hash to OTS calendars and the RFC 3161 query to FreeTSA (they send no CORS). Same-origin only; Turnstile when secret is set; 10 req/min/IP |
+| `POST /api/stamp` | **Cloudflare Worker** (`src/worker.js`) | Forwards the 32-byte hash to OTS calendars and the RFC 3161 query to FreeTSA (they send no CORS). Browser posts are same-origin only, with Turnstile when the secret is set. Trusted server callers may send `Authorization: Bearer <key>` instead (see below). 10 req/min per IP, or per API key; Bearer attempts are also limited per IP (20/min) before the key is looked up |
 | `GET /api/ots/upgrade` | **Cloudflare Worker** | CORS `*` so `verify.html` works from `file://`; calendar host allowlist; edge-cached 1 h; 60 req/min/IP |
 | `GET /api/ct/upgrade` | **Cloudflare Worker** | CORS `*`; returns pending until the digest's batch has a stored certificate |
 | Cron `*/15 * * * *` and `POST /api/ct/tick` | **Cloudflare Worker** | Closes due sub-batches; two-phase ACME issuance when `CF_DNS_TOKEN` is set (staging by default; production only if `CT_PRODUCTION=1`) |
 | OpenTimestamps calendars / Bitcoin / FreeTSA / Rekor / CT logs | **External** | LightDrawer runs no calendar and does no own anchoring. Rekor is called **directly from the browser** (CORS OK). Certificate-log stamps use Let's Encrypt + public CT logs |
+
+## Server-to-server stamps (API keys)
+
+The public site asks a browser to pass a human check (Cloudflare Turnstile) before it will stamp a hash. Another server — for example a Worker that wants to stamp its own session digests — cannot complete that check. For those trusted callers you can mint a per-caller API key.
+
+Only the SHA-256 hash of the key is stored, in the existing D1 database (`stamp_keys`). The plaintext key is shown once when you mint it and should live as a secret on the caller, not in this repo. A request that sends a valid key in `Authorization: Bearer …` skips Turnstile and uses its own 10-stamps-per-minute limit. Any request that presents a Bearer header is first limited to about 20 attempts per IP per minute, before LightDrawer looks the key up in D1, so junk keys cannot flood the database. Worker logs record the key's label (for example `fairview`); the public receipt is unchanged and does not name the caller. Requests without a key behave exactly as they do today.
+
+Create the table on an existing database (once), then mint a key and insert only its hash:
+
+```sh
+wrangler d1 execute lightdrawer-ct --remote --file=migrations/0001_stamp_keys.sql
+# If you deploy with a private config: add -c wrangler.production.jsonc to these commands.
+
+node scripts/stamp-key.mjs mint fairview
+# Copy the plaintext key into the caller's secret store (shown once).
+# Then run the printed wrangler d1 execute … --command "INSERT …" line
+# (that SQL contains the hash, not the key).
+```
+
+List and revoke:
+
+```sh
+wrangler d1 execute lightdrawer-ct --remote --command "SELECT id, label, created_at, revoked_at FROM stamp_keys ORDER BY created_at"
+node scripts/stamp-key.mjs revoke-sql <id>
+# Then run the printed UPDATE command.
+```
+
+Example request (the body is the same as a browser stamp — a 64-character SHA-256 hex digest, and optionally a FreeTSA `tsq`):
+
+```sh
+curl -sS https://lightdrawer.org/api/stamp \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $LIGHTDRAWER_STAMP_KEY" \
+  --data '{"digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}'
+```
+
+The JSON response is still `{ "ots": { … }, "tsr": null, "errors": [] }` (`tsr` is `null` when the caller omits `tsq`). An empty, unknown, or revoked Bearer key is rejected with HTTP 401 `{"error":"Invalid or revoked API key."}`. Hitting the per-key limit, or the per-IP Bearer-attempt limit, returns HTTP 429 `{"error":"Too many requests. Try again in a minute."}`. A browser request with no `Authorization` header still needs a Turnstile token when `TURNSTILE_SECRET` is set. `/api/stamp` still sends no CORS headers, so this path is for a server caller (no `Origin` header required), not for JavaScript running in another site's page.
+
+New installs that apply `schema/ct.sql` already include the `stamp_keys` table. Self-hosters who use Wrangler migrations can run `wrangler d1 migrations apply lightdrawer-ct --remote` instead of the `--file` command above.
 
 ## Verify without LightDrawer
 

@@ -1,9 +1,11 @@
 import { runCtTick } from './ct-runtime.js';
+import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey } from './stamp-keys.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
 // hash-only proxies, because OpenTimestamps calendars and FreeTSA do not send CORS
 // headers. No accounts, no file contents ever reach this Worker. If CT_DB is bound,
 // only SHA-256 fingerprints are stored for the certificate-log stamp queue.
 //   POST /api/stamp          { digest, tsq, turnstile } -> { ots: {calendar: b64}, tsr: b64, errors }
+//                            Authorization: Bearer <key> skips Turnstile for trusted callers (hash stored in D1)
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /api/config         -> { turnstileSiteKey }
@@ -40,14 +42,33 @@ function containsDigest(tsq, digest) {
   return false;
 }
 
-async function handleStamp(req, env) {
+async function handleStamp(req, env, url) {
   const ip = clientIp(req);
-  if (await limited(env.STAMP_LIMITER, 'stamp:' + ip)) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
+  // Any Bearer attempt is limited per IP before a D1 lookup, so junk keys cannot flood the database.
+  // Prefer STAMP_AUTH_LIMITER (20/min) when bound; otherwise reuse STAMP_LIMITER.
+  if (parseBearer(req.headers.get('authorization')).kind !== 'none') {
+    const authLimiter = env.STAMP_AUTH_LIMITER || env.STAMP_LIMITER;
+    if (await limited(authLimiter, stampAuthLimitKey(ip))) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
+  }
+  const auth = await resolveStampCaller(req, env);
+  if (auth.status === 'unavailable') return json({ error: 'stamp key store unavailable' }, 503);
+  if (auth.status === 'unauthorized') return json({ error: 'Invalid or revoked API key.' }, 401);
+  const caller = auth.status === 'ok' ? auth.caller : null;
+  // Browser posts stay same-origin. A valid API key is the trust signal for server callers.
+  if (!caller) {
+    const origin = req.headers.get('origin');
+    if (origin && origin !== url.origin) return json({ error: 'cross-origin requests are not accepted' }, 403);
+  }
+  if (await limited(env.STAMP_LIMITER, stampLimitKey(caller, ip))) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
   const len = Number(req.headers.get('content-length') || 0);
   if (len > MAX_BODY * 2) return json({ error: 'request too large' }, 413);
   let body; try { body = JSON.parse(await req.text()); } catch { return json({ error: 'bad JSON' }, 400); }
   if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400);
-  if (!(await turnstileOk(env, body.turnstile, ip))) return json({ error: 'Human check failed or expired. Reload and try again.' }, 403);
+  if (caller) {
+    console.log(JSON.stringify({ msg: 'stamp key accepted', label: sanitizeLabel(caller.label), key_id: caller.id }));
+  } else if (!(await turnstileOk(env, body.turnstile, ip))) {
+    return json({ error: 'Human check failed or expired. Reload and try again.' }, 403);
+  }
   const digest = hexToBytes(body.digest);
   let tsq = null;
   if (body.tsq) {
@@ -182,9 +203,8 @@ export default {
     }
     if (url.pathname === '/api/stamp') {
       if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
-      // Same-origin only: no CORS headers, and reject cross-site form posts.
-      const origin = req.headers.get('origin'); if (origin && origin !== url.origin) return json({ error: 'cross-origin requests are not accepted' }, 403);
-      return handleStamp(req, env);
+      // Same-origin only for browser posts (no CORS headers). A valid API key may come from another origin.
+      return handleStamp(req, env, url);
     }
     if (url.pathname === '/api/ots/upgrade') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET', 'access-control-max-age': '86400' } });
