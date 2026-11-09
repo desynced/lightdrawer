@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
+import { runStampApiTests } from './stamp-api.mjs';
 import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const core = readFileSync(join(root, 'build/core.js'), 'utf8');
@@ -279,6 +280,8 @@ console.log('CT Worker runtime (allowlist, production ACME guard, CSR, Merkle ma
   ok(cfg.directory === RT.STAGING_DIRECTORY && cfg.anchorEveryMs === 6 * 60 * 60 * 1000, 'config defaults to staging ACME and a 6-hour anchor');
 }
 
+
+await runStampApiTests(ok);
 
 if (live) {
   console.log('LIVE: stamp a throwaway test file (hash only) at OpenTimestamps calendars + FreeTSA');
