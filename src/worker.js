@@ -1,5 +1,5 @@
 import { runCtTick } from './ct-runtime.js';
-import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey } from './stamp-keys.js';
+import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey, timingSafeEqualHex } from './stamp-keys.js';
 import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
 // hash-only proxies, because OpenTimestamps calendars and FreeTSA do not send CORS
@@ -20,11 +20,44 @@ const TSA_URL = 'https://freetsa.org/tsr';
 const UPSTREAM_TIMEOUT_MS = 10000;
 const MAX_BODY = 2048;
 
-const json = (obj, status = 200, extra = {}) => new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
+const json = (obj, status = 200, extra = {}) => new Response(JSON.stringify(obj), {
+  status,
+  headers: {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    ...extra,
+  },
+});
 const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
 const b64 = (u8) => { let s = ''; for (const c of u8) s += String.fromCharCode(c); return btoa(s); };
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const clientIp = (req) => req.headers.get('cf-connecting-ip') || 'local';
+
+async function readLimitedText(req, maxBytes) {
+  const declared = Number(req.headers.get('content-length') || 0);
+  if (Number.isFinite(declared) && declared > maxBytes) return { error: 'request too large' };
+  if (!req.body) return { text: '' };
+  const reader = req.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch { /* ignore */ }
+      return { error: 'request too large' };
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+  return { text: new TextDecoder().decode(out) };
+}
 
 async function limited(binding, key) {
   if (!binding) return false; // binding absent (e.g. some local setups): rely on WAF rule instead
@@ -64,9 +97,9 @@ async function handleStamp(req, env, url) {
     if (origin && origin !== url.origin) return json({ error: 'cross-origin requests are not accepted' }, 403);
   }
   if (await limited(env.STAMP_LIMITER, stampLimitKey(caller, ip))) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
-  const len = Number(req.headers.get('content-length') || 0);
-  if (len > MAX_BODY * 2) return json({ error: 'request too large' }, 413);
-  let body; try { body = JSON.parse(await req.text()); } catch { return json({ error: 'bad JSON' }, 400); }
+  const raw = await readLimitedText(req, MAX_BODY * 2);
+  if (raw.error) return json({ error: raw.error }, 413);
+  let body; try { body = JSON.parse(raw.text); } catch { return json({ error: 'bad JSON' }, 400); }
   if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400);
   if (caller) {
     console.log(JSON.stringify({ msg: 'stamp key accepted', label: sanitizeLabel(caller.label), key_id: caller.id }));
@@ -87,7 +120,10 @@ async function handleStamp(req, env, url) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const b = new Uint8Array(await r.arrayBuffer()); if (b.length > 10000) throw new Error('response too large');
       ots[cal] = b64(b);
-    } catch (e) { errors.push(`OpenTimestamps ${cal}: ${e.message}`); }
+    } catch (e) {
+      console.error(JSON.stringify({ msg: 'ots calendar error', calendar: cal, error: String(e && e.message ? e.message : e) }));
+      errors.push(`OpenTimestamps ${cal}: unavailable`);
+    }
   });
   let tsr = null;
   const tsaJob = tsq ? (async () => {
@@ -96,14 +132,20 @@ async function handleStamp(req, env, url) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const b = new Uint8Array(await r.arrayBuffer()); if (b.length > 20000) throw new Error('response too large');
       tsr = b64(b);
-    } catch (e) { errors.push(`FreeTSA: ${e.message}`); }
+    } catch (e) {
+      console.error(JSON.stringify({ msg: 'freetsa error', error: String(e && e.message ? e.message : e) }));
+      errors.push('FreeTSA: unavailable');
+    }
   })() : Promise.resolve();
   await Promise.all([...otsJobs, tsaJob]);
   // Optional CT queue: store only the 32-byte hash, and only if a D1 binding is present.
   if (env.CT_DB) {
     try {
       await env.CT_DB.prepare('INSERT OR IGNORE INTO ct_pending (digest, received_at) VALUES (?, ?)').bind(body.digest.toLowerCase(), new Date().toISOString()).run();
-    } catch (e) { errors.push('CT queue: ' + e.message); }
+    } catch (e) {
+      console.error(JSON.stringify({ msg: 'ct queue error', error: String(e && e.message ? e.message : e) }));
+      errors.push('CT queue: unavailable');
+    }
   }
   return json({ ots, tsr, errors });
 }
@@ -211,20 +253,14 @@ async function handleDigestQuery(req, url) {
   return redirectToReceipt(url.origin, digest);
 }
 
-function safeEqual(a, b) {
-  const enc = new TextEncoder();
-  const ba = enc.encode(String(a || '')), bb = enc.encode(String(b || ''));
-  if (ba.length !== bb.length) return false;
-  let d = 0;
-  for (let i = 0; i < ba.length; i++) d |= ba[i] ^ bb[i];
-  return d === 0;
-}
-
 async function handleCtTick(req, env) {
   if (!env.CT_TICK_SECRET) return json({ error: 'not found' }, 404);
+  const ip = clientIp(req);
+  const tickLimiter = env.STAMP_AUTH_LIMITER || env.STAMP_LIMITER || env.UPGRADE_LIMITER;
+  if (await limited(tickLimiter, 'ct-tick:' + ip)) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
   const auth = req.headers.get('authorization') || '';
   const got = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!safeEqual(got, env.CT_TICK_SECRET)) return json({ error: 'unauthorized' }, 401);
+  if (!(await timingSafeEqualHex(got, env.CT_TICK_SECRET))) return json({ error: 'unauthorized' }, 401);
   let body = {};
   try {
     const ct = req.headers.get('content-type') || '';

@@ -24,7 +24,7 @@ You can also share a lookup link: `https://lightdrawer.org/r/<fingerprint>`. It 
 
 Optional notes about where a file came from can be included. They are saved with the receipt, but they remain your own statements.
 
-A longer, precise walkthrough — what leaves your device, how each proof is built, what is stored, and how to check a receipt with ordinary tools — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+A longer, precise walkthrough — what leaves your device, how each proof is built, what is stored, and how to check a receipt with ordinary tools — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md). What's new, including how the live site is run, is listed in the [changelog](CHANGELOG.md).
 
 ## What's in the receipt
 

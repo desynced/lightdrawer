@@ -209,6 +209,79 @@ export async function runStampApiTests(ok) {
       },
     }), env, { waitUntil() {} });
     ok(preflight.status === 405 && !preflight.headers.get('access-control-allow-origin'), 'OPTIONS preflight on /api/stamp is rejected (no browser CORS)');
+
+    ok(fv.headers.get('content-security-policy') === "default-src 'none'; frame-ancestors 'none'", 'stamp JSON sends a tight CSP');
+    ok(fv.headers.get('x-content-type-options') === 'nosniff', 'stamp JSON sends nosniff');
+    ok(fv.headers.get('referrer-policy') === 'no-referrer', 'stamp JSON sends no-referrer');
+
+    const oversized = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"digest":"' + 'a'.repeat(64) + '","pad":"' + 'x'.repeat(5000) + '"}'));
+        controller.close();
+      },
+    });
+    const bigReqInit = {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + rec.token },
+      body: oversized,
+    };
+    // Node's fetch requires duplex when the body is a stream.
+    bigReqInit.duplex = 'half';
+    const big = await worker.fetch(new Request('https://lightdrawer.example/api/stamp', bigReqInit), env, { waitUntil() {} });
+    ok(big.status === 413, 'stamp body over the cap is 413 even without Content-Length');
+    ok(((await big.json()).error || '').includes('too large'), 'oversized body returns a generic too-large error');
+
+    const boomFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes('challenges.cloudflare.com/turnstile')) return Response.json({ success: false });
+      if (u.includes('/digest') || u.includes('freetsa.org')) throw new Error('secret internals boom SQL table ct_pending');
+      throw new Error('unexpected fetch: ' + u);
+    };
+    const boom = await stamp({ authorization: 'Bearer ' + rec.token });
+    const boomBody = await boom.json();
+    globalThis.fetch = boomFetch;
+    ok(boom.status === 200 && Array.isArray(boomBody.errors) && boomBody.errors.length > 0, 'stamp still returns JSON when upstreams fail');
+    ok(boomBody.errors.every((e) => /unavailable$/.test(e)), 'upstream failures use a generic unavailable message');
+    ok(!JSON.stringify(boomBody).includes('secret internals') && !JSON.stringify(boomBody).includes('ct_pending'), 'raw upstream messages are not returned');
+
+    const explodingDb = {
+      prepare(sql) {
+        if (/ct_pending/.test(sql)) {
+          return { bind() { return { async run() { throw new Error('D1 UNIQUE exploded internals'); }, async first() { return null; } }; } };
+        }
+        return mockD1(rows).prepare(sql);
+      },
+    };
+    const exploded = await worker.fetch(new Request('https://lightdrawer.example/api/stamp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + rec.token },
+      body: JSON.stringify({ digest: DIGEST }),
+    }), { ...env, CT_DB: explodingDb }, { waitUntil() {} });
+    const explodedBody = await exploded.json();
+    ok(exploded.status === 200 && explodedBody.errors.includes('CT queue: unavailable'), 'CT queue failures use a generic error');
+    ok(!JSON.stringify(explodedBody).includes('exploded internals'), 'raw D1 messages are not returned');
+
+    const tickSeen = [];
+    const tickEnv = {
+      CT_TICK_SECRET: 'tick-secret-value',
+      STAMP_AUTH_LIMITER: mockLimiter(tickSeen),
+    };
+    const wrongLen = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+      method: 'POST',
+      headers: { authorization: 'Bearer x', 'content-type': 'application/json' },
+      body: '{}',
+    }), tickEnv, { waitUntil() {} });
+    ok(wrongLen.status === 401, 'tick rejects a wrong-length secret');
+    ok(wrongLen.headers.get('content-security-policy') === "default-src 'none'; frame-ancestors 'none'", 'tick JSON sends a tight CSP');
+    ok(tickSeen.some((k) => k === 'ct-tick:local'), 'tick uses a distinct rate-limit key');
+
+    const tickLimited = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+      method: 'POST',
+      headers: { authorization: 'Bearer tick-secret-value', 'content-type': 'application/json' },
+      body: '{}',
+    }), { ...tickEnv, STAMP_AUTH_LIMITER: mockLimiter([], 'ct-tick:') }, { waitUntil() {} });
+    ok(tickLimited.status === 429, 'tick is rate-limited independently of stamp buckets');
   } finally {
     globalThis.fetch = savedFetch;
   }

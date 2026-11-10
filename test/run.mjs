@@ -1,7 +1,7 @@
 // Self-tests for the receipt core. `node test/run.mjs` (offline + public read-only lookups)
 // `node test/run.mjs --live` also stamps a throwaway test hash at OpenTimestamps calendars
 // and FreeTSA (hash only; no Rekor write) and checks the result with openssl and `ots`.
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
@@ -256,6 +256,26 @@ console.log('CT Worker runtime (allowlist, production ACME guard, CSR, Merkle ma
     try { RT.assertAllowedAcmeTxtName(bad); } catch { blocked++; }
   }
   ok(blocked === 5, 'DNS allowlist rejects names outside _acme-challenge.<32hex>.<32hex>.ct.lightdrawer.org');
+  const errStore = { last_error: '{"error":"old"}' };
+  const metaDb = {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async first() { return errStore[params[0]] == null ? null : { value: errStore[params[0]] }; },
+            async run() {
+              if (/DELETE FROM ct_meta/.test(sql)) delete errStore[params[0]];
+              return { success: true };
+            },
+          };
+        },
+      };
+    },
+  };
+  await RT.clearIssuanceError(metaDb, { skipped: true });
+  ok(errStore.last_error === '{"error":"old"}', 'last_error is kept if issuance did not succeed');
+  await RT.clearIssuanceError(metaDb, { issued: true });
+  ok(errStore.last_error == null, 'last_error is cleared after a successful issuance');
   const hex = async (n) => L.toHex(await L.sha256(L.utf8('leaf-' + n)));
   const a = await hex(1), b = await hex(2), c = await hex(3);
   const coreTree = await L.ctMerkleBuild([a, b, c]);
@@ -317,5 +337,14 @@ if (live) {
   const otsBin = process.env.OTS_BIN || join(root, '.venv-test/bin/ots');
   try { const o = execFileSync(otsBin, ['info', 'proofs/statement.json.ots'], { cwd: join(out, 'x') }).toString(); console.log(o.split('\n').slice(0, 6).map((x) => '     ' + x).join('\n')); ok(/File sha256 hash/.test(o), '`ots info` parses our .ots'); } catch (e) { ok(false, 'ots info: ' + e.message); }
   try { execFileSync(otsBin, ['verify', '-f', 'statement.json', 'proofs/statement.json.ots'], { cwd: join(out, 'x'), stdio: 'pipe' }); ok(true, 'ots verify'); } catch (e) { const t = String(e.stderr || '') + String(e.stdout || ''); ok(/Pending confirmation|pending/i.test(t), '`ots verify` reports pending (expected right after stamping): ' + t.trim().split('\n').slice(-1)[0]); }
+}
+{
+  const secPath = join(root, 'public/.well-known/security.txt');
+  const sec = existsSync(secPath) ? readFileSync(secPath, 'utf8') : '';
+  ok(existsSync(secPath), 'security.txt is copied into public/');
+  ok(/Contact: https:\/\/github.com\/desynced\/lightdrawer\/security\/advisories\/new/.test(sec), 'security.txt points at GitHub advisories');
+  ok(/Canonical: https:\/\/lightdrawer.org\/\.well-known\/security.txt/.test(sec), 'security.txt names its canonical URL');
+  ok(/Expires: 2027-11-10T18:00:00.000Z/.test(sec), 'security.txt expires in about a year');
+  ok(/Preferred-Languages: en/.test(sec), 'security.txt prefers English');
 }
 console.log(failed ? `\n${failed} FAILED` : '\nall passed'); process.exit(failed ? 1 : 0);

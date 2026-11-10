@@ -503,6 +503,10 @@ export async function acmePhase2(env, db, state) {
   return { issued: true, cert_id: cert.id, hostnames: state.hostnames, method: issued.method, clearError: issued.clearError || null };
 }
 
+export async function clearIssuanceError(db, issuance) {
+  if (issuance && issuance.issued === true) await metaDel(db, 'last_error');
+}
+
 export async function runCtTick(env, opts = {}) {
   const force = !!opts.force;
   const summary = { ok: true, force, closed: [], issuance: null, skipped: null, error: null };
@@ -539,6 +543,7 @@ export async function runCtTick(env, opts = {}) {
           return summary;
         }
         summary.issuance = await acmePhase2(env, db, state);
+        await clearIssuanceError(db, summary.issuance);
         return summary;
       }
     }

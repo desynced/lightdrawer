@@ -44,5 +44,10 @@ if (existsSync(join(root, 'web/ui/index.html'))) {
     const src = join(root, 'web/ui', f);
     if (existsSync(src)) copyFileSync(src, join(root, 'public', f));
   }
+  const securityTxt = join(root, 'web/ui/.well-known/security.txt');
+  if (existsSync(securityTxt)) {
+    mkdirSync(join(root, 'public/.well-known'), { recursive: true });
+    copyFileSync(securityTxt, join(root, 'public/.well-known/security.txt'));
+  }
 }
 console.log(`built: ${libs.length} libs, root pin ${rootSha256}`);
