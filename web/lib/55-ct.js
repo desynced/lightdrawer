@@ -287,19 +287,51 @@ function ctSctSignedData(sct, entryType, signedEntry) {
     sct.extensions
   );
 }
+function ctLogIdHex(log) {
+  if (log && log.log_id) {
+    try { return toHex(fromB64(log.log_id)); } catch (e) { return ''; }
+  }
+  return '';
+}
 function ctLookupLog(trust, logId) {
   const idHex = toHex(logId);
   const logs = (trust && trust.ctLogs) || [];
   for (const log of logs) {
-    const listed = log.log_id ? toHex(fromB64(log.log_id)) : '';
-    const keyHex = log.key ? toHex(fromB64(log.key)) : '';
-    if (listed === idHex || (keyHex && toHex(fromB64(log.log_id || '')) === idHex)) return log;
-    if (listed === idHex) return log;
-  }
-  for (const log of logs) {
-    if (log.log_id && toHex(fromB64(log.log_id)) === idHex) return log;
+    if (ctLogIdHex(log) === idHex) return log;
   }
   return null;
+}
+/* Rebuild the precertificate TBSCertificate from an issued leaf by removing the
+   embedded SCT list extension (OID 1.3.6.1.4.1.11129.2.4.2). RFC 6962 SCTs that
+   Let's Encrypt embeds are signatures over this reconstructed TBS plus the
+   issuer's SPKI hash, not over the final certificate. Other TBS fields keep
+   their original DER encoding. */
+function ctPrecertTbsFromCert(cert) {
+  const SCT_OID = '1.3.6.1.4.1.11129.2.4.2';
+  const tbs = derParse(cert.der).children[0];
+  let extIdx = -1;
+  for (let i = 0; i < tbs.children.length; i++) {
+    if (tbs.children[i].tag === 0xa3) { extIdx = i; break; }
+  }
+  if (extIdx < 0) return cert.tbsRaw;
+  const extSeq = tbs.children[extIdx].children[0];
+  const kept = [];
+  let removed = false;
+  for (const ext of extSeq.children) {
+    if (derOid(ext.children[0]) === SCT_OID) { removed = true; continue; }
+    kept.push(ext.raw);
+  }
+  if (!removed) return cert.tbsRaw;
+  const newWrap = derEnc(0xa3, derEnc(0x30, concat(...kept)));
+  const parts = [];
+  for (let i = 0; i < tbs.children.length; i++) parts.push(i === extIdx ? newWrap : tbs.children[i].raw);
+  return derEnc(0x30, concat(...parts));
+}
+async function ctPrecertSignedData(sct, leaf, issuer) {
+  if (!issuer) return null;
+  const tbs = ctPrecertTbsFromCert(leaf);
+  const issuerKeyHash = await sha256(issuer.spkiRaw);
+  return ctSctSignedData(sct, 1, concat(issuerKeyHash, ctU24enc(tbs.length), tbs));
 }
 async function ctVerifySctSignature(sct, signedData, log) {
   if (!log || !log.key) return false;
@@ -407,12 +439,22 @@ async function ctVerify(entry, statementDigestHex, trust) {
     let anySct = false;
     for (const sct of scts) {
       const log = ctLookupLog(trust || {}, sct.logId);
-      const signedX509 = ctSctSignedData(sct, 0, leaf.der);
-      let verified = false;
-      if (log) verified = await ctVerifySctSignature(sct, signedX509, log);
+      let verified = false, how = '';
+      if (log) {
+        const signedX509 = ctSctSignedData(sct, 0, leaf.der);
+        if (await ctVerifySctSignature(sct, signedX509, log)) { verified = true; how = 'x509_entry'; }
+        if (!verified) {
+          const signedPrecert = certs[1] ? await ctPrecertSignedData(sct, leaf, certs[1]) : null;
+          if (signedPrecert && await ctVerifySctSignature(sct, signedPrecert, log)) { verified = true; how = 'precert_entry'; }
+        }
+      }
       const name = (log && (log.name || log.description)) || ('log ' + toHex(sct.logId).slice(0, 16) + '…');
       const when = new Date(sct.timestampMs).toISOString();
-      checks.push(chk('ct.sct.' + toHex(sct.logId).slice(0, 8), verified ? 'pass' : (log ? 'warn' : 'info'), verified ? 'SCT signature checks out (' + name + ')' : (log ? 'SCT signature did not verify as an x509_entry against ' + name + ' (precert SCTs need the precertificate TBS; not reconstructed here)' : 'SCT from an unknown log (key not in the bundled list)'), when + (log && log.mmd ? `; this log advertises MMD ${log.mmd}s` : '')));
+      const title = verified ? 'SCT signature checks out (' + name + ')' : (log ? 'SCT signature did not verify against ' + name : 'SCT from an unknown log (key not in the bundled list)');
+      const extras = [when];
+      if (verified) extras.push(how === 'precert_entry' ? 'precertificate SCT' : 'x509_entry SCT');
+      if (log && log.mmd) extras.push('this log advertises MMD ' + log.mmd + 's');
+      checks.push(chk('ct.sct.' + toHex(sct.logId).slice(0, 8), verified ? 'pass' : (log ? 'warn' : 'info'), title, extras.join('; ')));
       if (verified) { anySct = true; times.push({ source: 'Certificate Transparency SCT (' + name + ')', time: new Date(sct.timestampMs), note: 'SCT timestamp: the log first saw this certificate no later than this moment. The log may take up to its maximum merge delay (commonly 24 hours) to show it in a queryable tree.' }); }
     }
     if (chain.ok) {

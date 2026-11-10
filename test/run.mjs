@@ -8,10 +8,11 @@ import { join, dirname } from 'node:path';
 import { runStampApiTests } from './stamp-api.mjs';
 import { runReceiptLinkTests } from './receipt-link.mjs';
 import { runStampButtonTests } from './stamp-button.mjs';
+import { runSctLogKeysTests } from './sct-log-keys.mjs';
 import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const core = readFileSync(join(root, 'build/core.js'), 'utf8');
-const names = ['toHex', 'fromHex', 'utf8', 'sha256', 'bytesEq', 'tsaVerify', 'tsaBuildRequest', 'otsParseDetached', 'otsSerializeDetached', 'otsVerify', 'otsEsploraLookup', 'otsAttestations', 'rekorVerify', 'zipWrite', 'zipRead', 'c2paInspect', 'c2paInspectSource', 'makeReceipt', 'verifyReceipt', 'TRUST', 'TRUST_FILES', 'OTS_DEFAULT_CALENDARS', 'coverText', 'CT_DEFAULTS', 'ctConfigNormalize', 'ctWeeklyCertEstimate', 'ctRootToHostname', 'ctHostnameToRoot', 'ctMerkleBuild', 'ctMerkleVerify', 'ctNewState', 'ctSubmit', 'ctCloseDueSubBatches', 'ctPlanAnchor', 'ctRecordIssuance', 'ctPendingEntry', 'ctUpgradeFromState', 'ctVerify', 'x509Parse', 'x509SANs', 'pemToDer', 'sha256Source', 'sha256Create', 'sha256Update', 'sha256Finish', 'SHA256_FILE_CHUNK', 'C2PA_HEAD_BYTES'];
+const names = ['toHex', 'fromHex', 'utf8', 'sha256', 'bytesEq', 'tsaVerify', 'tsaBuildRequest', 'otsParseDetached', 'otsSerializeDetached', 'otsVerify', 'otsEsploraLookup', 'otsAttestations', 'rekorVerify', 'zipWrite', 'zipRead', 'c2paInspect', 'c2paInspectSource', 'makeReceipt', 'verifyReceipt', 'TRUST', 'TRUST_FILES', 'OTS_DEFAULT_CALENDARS', 'coverText', 'CT_DEFAULTS', 'ctConfigNormalize', 'ctWeeklyCertEstimate', 'ctRootToHostname', 'ctHostnameToRoot', 'ctMerkleBuild', 'ctMerkleVerify', 'ctNewState', 'ctSubmit', 'ctCloseDueSubBatches', 'ctPlanAnchor', 'ctRecordIssuance', 'ctPendingEntry', 'ctUpgradeFromState', 'ctVerify', 'ctParseSctList', 'ctLookupLog', 'ctPrecertSignedData', 'ctSctSignedData', 'ctVerifySctSignature', 'x509Parse', 'x509SANs', 'x509SctListBytes', 'pemToDer', 'sha256Source', 'sha256Create', 'sha256Update', 'sha256Finish', 'SHA256_FILE_CHUNK', 'C2PA_HEAD_BYTES'];
 const L = new Function(core + `\nreturn { ${names.join(', ')} };`)();
 const fx = (f) => new Uint8Array(readFileSync(join(root, 'test/fixtures', f)));
 let failed = 0;
@@ -306,6 +307,7 @@ console.log('CT Worker runtime (allowlist, production ACME guard, CSR, Merkle ma
 await runStampApiTests(ok);
 await runReceiptLinkTests(ok);
 await runStampButtonTests(ok);
+await runSctLogKeysTests(ok, L);
 
 if (live) {
   console.log('LIVE: stamp a throwaway test file (hash only) at OpenTimestamps calendars + FreeTSA');
