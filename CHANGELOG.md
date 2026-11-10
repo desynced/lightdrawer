@@ -8,9 +8,15 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.3.1] - 2026-11-10
+
 ### Fixed
 - The offline verifier now checks Let's Encrypt's embedded precertificate SCTs against bundled Certificate Transparency log keys, instead of warning that the signature did not match. The bundled list also includes current static-ct-api (tiled) logs such as IPng Gouda, which the previous snapshot skipped. Refresh the snapshot with `node scripts/refresh-ct-logs.mjs`; verification itself stays offline.
 
+### Changed
+- The three example receipts in `examples/` were remade with the current LightDrawer. Each now includes the finished Bitcoin proof, the FreeTSA timestamp, and the certificate-log proof, and the README links to each one's public receipt page.
 
 ## [1.3.0] - 2026-11-10
 

@@ -205,6 +205,10 @@ Or open `verify.html` (works from `file://`; sends nothing unless you opt in to 
 - `examples/demo/harbor-photo.jpg` — sample file used in the demo (plus an edited copy that fails verification).
 - `examples/c2pa-sample-receipt/` — browser-made receipt for the C2PA test image (with provenance fields).
 - `examples/selftest-receipt/` — receipt from `npm run test:live` plus its original file.
+- **Fresh example receipts, made Nov 10, 2026.** The three receipt ZIPs above are complete: each has a Bitcoin (OpenTimestamps) proof, a FreeTSA timestamp, and a certificate-log proof. You can open each one's public receipt page and drop the matching sample file on it to check it:
+  - [selftest.txt receipt](https://lightdrawer.org/r/d83f8a256bfc0c6817290c2af8d63c86370147e2f4e7f6cb7009d6fb7a7f97ad)
+  - [harbor-photo.jpg receipt](https://lightdrawer.org/r/dc5a0a3bf7081067acbb8c5e2c405ce6e428df064db0cf43b3ca7484dfaa441a)
+  - [c2pa-sample-CA.jpg receipt](https://lightdrawer.org/r/19dc6f4e665d7675b6a107bb11097245322d6c5b98599b9058d7e48ae582b260)
 - `examples/stamp-button/` — a demo host page with copy-paste stamp and receipt-check buttons (does not include receipt ZIP files).
 - `examples/*.png` — screenshots of the maker, verifier, and cover page.
 
