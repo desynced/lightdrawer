@@ -8,7 +8,8 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- The three example receipts in `examples/` were remade with the current LightDrawer. Each now includes the finished Bitcoin proof, the FreeTSA timestamp, and the certificate-log proof, and the README links to each one's public receipt page.
 
 ## [1.3.0] - 2026-11-10
 
