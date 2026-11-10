@@ -80,6 +80,16 @@
       if (good) {
         const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rc.zip], { type: 'application/zip' })); a.download = file.name + '.lightdrawer-receipt.zip'; a.textContent = 'Download ' + a.download; box.append(a);
         a.click();
+        if (rc.index && rc.index.statement_sha256) {
+          const share = document.createElement('p'); share.className = 'share-link';
+          share.append('Share link: ');
+          const link = document.createElement('a');
+          const path = '/r/' + rc.index.statement_sha256;
+          link.href = path;
+          link.textContent = (location.origin || 'https://lightdrawer.org') + path;
+          share.append(link);
+          box.append(share);
+        }
       }
       $('result').append(box); $('status').textContent = '';
     } catch (e) { $('status').textContent = ''; const d = document.createElement('div'); d.className = 'err'; d.textContent = 'Something went wrong: ' + e.message; $('result').append(d); }

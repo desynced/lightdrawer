@@ -20,6 +20,8 @@ It is for journalists, photographers, artists, small businesses, and anyone who 
 2. **Get your receipt** — a small download to keep with the original file, like a time-stamped ticket.
 3. **Anyone can check it** by opening the receipt and, if they have it, the original file. They do not need an account, and they do not have to trust us. Every receipt includes its own checker.
 
+You can also share a lookup link: `https://lightdrawer.org/r/<fingerprint>`. It opens a page that shows whether LightDrawer has a record of that fingerprint, when it was received, and whether a public certificate-log record is ready. The full proof (Bitcoin and the RFC 3161 timestamp) still lives in the receipt file. For a receipt made on this site, the fingerprint in the link is the SHA-256 of `statement.json`, not of the original file alone. A `/?digest=<fingerprint>` address redirects to the same page.
+
 Optional notes about where a file came from can be included. They are saved with the receipt, but they remain your own statements.
 
 A longer, precise walkthrough — what leaves your device, how each proof is built, what is stored, and how to check a receipt with ordinary tools — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
@@ -115,6 +117,7 @@ The committed `wrangler.jsonc` is a template with placeholders (empty Turnstile 
 | `POST /api/stamp` | **Cloudflare Worker** (`src/worker.js`) | Forwards the 32-byte hash to OTS calendars and the RFC 3161 query to FreeTSA (they send no CORS). Browser posts are same-origin only, with Turnstile when the secret is set. Trusted server callers may send `Authorization: Bearer <key>` instead (see below). 10 req/min per IP, or per API key; Bearer attempts are also limited per IP (20/min) before the key is looked up |
 | `GET /api/ots/upgrade` | **Cloudflare Worker** | CORS `*` so `verify.html` works from `file://`; calendar host allowlist; edge-cached 1 h; 60 req/min/IP |
 | `GET /api/ct/upgrade` | **Cloudflare Worker** | CORS `*`; returns pending until the digest's batch has a stored certificate |
+| `GET /r/<fingerprint>` | **Cloudflare Worker** | Public lookup page for a stamped fingerprint. `/?digest=<fingerprint>` redirects here. Optional JSON via `Accept: application/json` or `GET /api/lookup?digest=` |
 | Cron `*/15 * * * *` and `POST /api/ct/tick` | **Cloudflare Worker** | Closes due sub-batches; two-phase ACME issuance when `CF_DNS_TOKEN` is set (staging by default; production only if `CT_PRODUCTION=1`) |
 | OpenTimestamps calendars / Bitcoin / FreeTSA / Rekor / CT logs | **External** | LightDrawer runs no calendar and does no own anchoring. Rekor is called **directly from the browser** (CORS OK). Certificate-log stamps use Let's Encrypt + public CT logs |
 

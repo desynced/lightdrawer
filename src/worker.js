@@ -1,5 +1,6 @@
 import { runCtTick } from './ct-runtime.js';
 import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey } from './stamp-keys.js';
+import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
 // hash-only proxies, because OpenTimestamps calendars and FreeTSA do not send CORS
 // headers. No accounts, no file contents ever reach this Worker. If CT_DB is bound,
@@ -8,6 +9,9 @@ import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stam
 //                            Authorization: Bearer <key> skips Turnstile for trusted callers (hash stored in D1)
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
+//   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
+//   GET  /?digest=<hex>      -> 302 redirect to /r/<digest>
+//   GET  /api/lookup?digest=<hex>  -> same record as JSON
 //   GET  /api/config         -> { turnstileSiteKey }
 const CALENDARS = ['https://a.pool.opentimestamps.org', 'https://b.pool.opentimestamps.org', 'https://a.pool.eternitywall.com'];
 // Pending attestations name the calendar that will finish the proof; only these hosts are proxied.
@@ -170,6 +174,43 @@ async function handleCtUpgrade(req, env, url) {
   }
 }
 
+
+async function handleReceiptLookup(req, env, url) {
+  const origin = url.origin;
+  const asJson = wantsJson(req, url.pathname);
+  const respond = (opts) => (asJson ? jsonResponse(req, opts) : htmlResponse(req, { ...opts, origin }));
+  if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'GET only' }, 405);
+  let digest = null;
+  if (url.pathname === '/api/lookup') {
+    digest = normalizeDigest(url.searchParams.get('digest') || '');
+    if (!digest) return respond({ kind: 'malformed', digest: null, status: 400 });
+  } else {
+    const parsed = parseReceiptPath(url.pathname);
+    if (!parsed) return respond({ kind: 'malformed', digest: null, status: 400 });
+    if (parsed.kind === 'empty' || parsed.kind === 'malformed') return respond({ kind: 'malformed', digest: null, status: 400 });
+    if (parsed.needsCanonical && req.method === 'GET' && !asJson) return redirectToReceipt(origin, parsed.digest);
+    digest = parsed.digest;
+  }
+  if (!env.CT_DB) return respond({ kind: 'not_found', digest, record: { found: false, digest }, status: 404 });
+  try {
+    const record = await lookupStamp(env.CT_DB, digest);
+    if (!record.found) return respond({ kind: 'not_found', digest, record, status: 404 });
+    return respond({ kind: 'found', digest, record, status: 200 });
+  } catch (e) {
+    return respond({ kind: 'error', digest, status: 502 });
+  }
+}
+
+async function handleDigestQuery(req, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('GET only', { status: 405 });
+  const digest = normalizeDigest(url.searchParams.get('digest') || '');
+  if (!digest) {
+    if (wantsJson(req, url.pathname)) return jsonResponse(req, { kind: 'malformed', digest: null, status: 400 });
+    return htmlResponse(req, { kind: 'malformed', digest: null, origin: url.origin, status: 400 });
+  }
+  return redirectToReceipt(url.origin, digest);
+}
+
 function safeEqual(a, b) {
   const enc = new TextEncoder();
   const ba = enc.encode(String(a || '')), bb = enc.encode(String(b || ''));
@@ -196,6 +237,12 @@ async function handleCtTick(req, env) {
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
+    if (url.pathname === '/' && url.searchParams.has('digest')) return handleDigestQuery(req, url);
+    if (url.pathname === '/r' || url.pathname.startsWith('/r/')) return handleReceiptLookup(req, env, url);
+    if (url.pathname === '/api/lookup') {
+      if (req.method === 'OPTIONS') return json({ error: 'GET only' }, 405);
+      return handleReceiptLookup(req, env, url);
+    }
     if (url.pathname === '/api/config' && req.method === 'GET') return json({ turnstileSiteKey: env.TURNSTILE_SITE_KEY || '' });
     if (url.pathname === '/api/ct/tick') {
       if (req.method !== 'POST') return json({ error: 'POST only' }, 405);

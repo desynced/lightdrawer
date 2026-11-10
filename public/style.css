@@ -133,3 +133,10 @@ details.tech{margin-top:2rem;padding:0}
 details.tech p{margin:.75rem 1rem}
 footer{margin-top:3rem;color:var(--muted);font-size:.9rem;border-top:1px solid var(--line);padding-top:1.2rem}
 :focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.fingerprint-box{font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;word-break:break-word;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1rem 1.1rem;margin:1rem 0 1.15rem;box-shadow:var(--shadow)}
+.fingerprint-box strong{display:block;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:.95rem;margin-bottom:.35rem}
+.how-check{margin-top:2.25rem}
+.how-check h2{font-size:1.2rem;letter-spacing:-.02em;margin:0 0 .7rem}
+.how-check p{color:var(--muted)}
+#result .share-link{margin:.85rem 0 0;color:var(--ink)}
+#result .share-link a{font-weight:700;overflow-wrap:anywhere;word-break:break-word}

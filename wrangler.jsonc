@@ -10,8 +10,9 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "404-page",
-    // Only /api/* runs the Worker; everything else is served straight from static assets.
-    "run_worker_first": ["/api/*"]
+    // /api/* and /r/* are dynamic. "/" runs first so /?digest=<hex> can 302 to /r/<hex>.
+    // Everything else is served straight from static assets.
+    "run_worker_first": ["/api/*", "/r", "/r/*", "/"]
   },
   "vars": {
     // Turnstile site key is NOT listed here — do not commit a real value.
