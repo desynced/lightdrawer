@@ -8,6 +8,10 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.2.2] - 2026-11-10
+
 ### Changed
 - Stamp requests now cap the request body by counting the bytes actually read, even if `Content-Length` is missing.
 - JSON API responses now send a tight Content-Security-Policy (`default-src 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `frame-ancestors 'none'`.
@@ -22,6 +26,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - The Worker's default workers.dev address was turned off, so the production site is only reached through lightdrawer.org (and www).
 - The site's minimum TLS version was raised to 1.2.
 - The site's SSL mode was set to Full (strict).
+- www.lightdrawer.org now redirects permanently to lightdrawer.org.
 
 ## [1.2.1] - 2026-11-10
 
