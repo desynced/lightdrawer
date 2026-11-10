@@ -1799,6 +1799,120 @@ const TRUST = {
 };
 const TRUST_FILES = { 'freetsa-cacert.pem': utf8(TRUST.rootPem), 'freetsa-tsa.crt': utf8(TRUST.tsaCertPem), 'rekor.sigstore.dev.pub': utf8(TRUST.rekorPubPem) };
 
+// Parse and check "Stamp this with LightDrawer" links.
+// ?expect=<64-hex> is the SHA-256 of the original file (not statement.json).
+// #digest=<64-hex> is the same file hash, passed in the fragment so it is
+// never sent to a server. Neither value is a receipt fingerprint (/r/<hash>).
+// This module never writes HTML; the UI must use textContent, not innerHTML.
+
+const HEX64_RE = /^[0-9a-f]{64}$/;
+
+function normalizeHexHash(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  return HEX64_RE.test(s) ? s : null;
+}
+
+function readSearchParams(search) {
+  const s = String(search == null ? '' : search);
+  return new URLSearchParams(s.startsWith('?') ? s.slice(1) : s);
+}
+
+function readHashParams(hash) {
+  const s = String(hash == null ? '' : hash);
+  return new URLSearchParams(s.startsWith('#') ? s.slice(1) : s);
+}
+
+function parseExpectQuery(search) {
+  const params = readSearchParams(search);
+  const present = params.has('expect');
+  if (!present) return { present: false, hash: null };
+  return { present: true, hash: normalizeHexHash(params.get('expect')) };
+}
+
+function parseDigestFragment(hash) {
+  const params = readHashParams(hash);
+  const present = params.has('digest');
+  if (!present) return { present: false, hash: null };
+  return { present: true, hash: normalizeHexHash(params.get('digest')) };
+}
+
+function resolveStampLink({ search = '', hash = '' } = {}) {
+  const expect = parseExpectQuery(search);
+  const digest = parseDigestFragment(hash);
+  const invalid = (expect.present && !expect.hash) || (digest.present && !digest.hash);
+  let expected = null;
+  let source = null;
+  if (digest.hash) {
+    expected = digest.hash;
+    source = 'fragment';
+  }
+  if (expect.hash) {
+    if (!expected) {
+      expected = expect.hash;
+      source = 'query';
+    }
+  }
+  const conflict = !!(digest.hash && expect.hash && digest.hash !== expect.hash);
+  return { expected, source, conflict, invalid, expect, digest };
+}
+
+function compareFileHash(fileHash, expected) {
+  const file = normalizeHexHash(fileHash);
+  const exp = normalizeHexHash(expected);
+  if (!exp) return 'none';
+  if (!file) return 'waiting';
+  return file === exp ? 'match' : 'mismatch';
+}
+
+function stampLinkNotice(resolution, fileHash) {
+  const notices = [];
+  if (!resolution) {
+    return { comparison: 'none', notices, canStamp: true };
+  }
+  if (resolution.invalid) {
+    notices.push({
+      kind: 'invalid',
+      title: 'This link included something that is not a fingerprint.',
+      body: 'That extra part was ignored. You can still drop a file here to make a receipt.',
+    });
+  }
+  if (resolution.conflict) {
+    notices.push({
+      kind: 'conflict',
+      title: 'This link lists two different fingerprints.',
+      body: 'Please choose the file you meant to stamp, or open LightDrawer from the start.',
+    });
+  }
+  const comparison = compareFileHash(fileHash, resolution.expected);
+  if (comparison === 'waiting') {
+    notices.push({
+      kind: 'waiting',
+      title: 'A website asked you to stamp a file with a known fingerprint.',
+      body: 'Drop that same file here to confirm it. The file stays on this device and is never uploaded.',
+      hash: resolution.expected,
+    });
+  }
+  if (comparison === 'match') {
+    notices.push({
+      kind: 'match',
+      title: 'This file matches the fingerprint the other site sent.',
+      body: 'You can finish the check below to get your receipt.',
+      hash: resolution.expected,
+    });
+  }
+  if (comparison === 'mismatch') {
+    notices.push({
+      kind: 'mismatch',
+      title: 'This file does not match the fingerprint the other site sent.',
+      body: 'Please choose the same file you started with. If you meant to stamp this file instead, open LightDrawer without that extra link.',
+      expected: resolution.expected,
+      actual: normalizeHexHash(fileHash),
+    });
+  }
+  return { comparison, notices, canStamp: comparison !== 'mismatch' };
+}
+
 /* Receipt maker UI (served by the Worker's static assets). */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -1824,6 +1938,59 @@ const TRUST_FILES = { 'freetsa-cacert.pem': utf8(TRUST.rootPem), 'freetsa-tsa.cr
     const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'; s.async = true; document.head.append(s);
   }
   const drop = $('drop'), input = $('file');
+  function currentStampLink() {
+    return resolveStampLink({ search: location.search, hash: location.hash });
+  }
+  function renderStampLinkBanner(notice) {
+    const box = $('expect-banner');
+    if (!box) return;
+    box.replaceChildren();
+    if (!notice || !notice.notices.length) {
+      box.hidden = true;
+      box.className = 'expect-banner';
+      return;
+    }
+    box.hidden = false;
+    const kinds = notice.notices.map((n) => n.kind);
+    box.className = 'expect-banner' + (
+      kinds.includes('mismatch') || kinds.includes('conflict') ? ' mismatch' :
+      kinds.includes('match') ? ' match' : ' info'
+    );
+    for (const n of notice.notices) {
+      const h = document.createElement('strong');
+      h.textContent = n.title;
+      box.append(h);
+      const p = document.createElement('p');
+      p.textContent = n.body;
+      box.append(p);
+      if (n.hash || n.expected) {
+        const row = document.createElement('p');
+        row.append('Expected fingerprint: ');
+        const code = document.createElement('code');
+        code.textContent = n.hash || n.expected;
+        row.append(code);
+        box.append(row);
+      }
+      if (n.actual) {
+        const row = document.createElement('p');
+        row.append('This file’s fingerprint: ');
+        const code = document.createElement('code');
+        code.textContent = n.actual;
+        row.append(code);
+        box.append(row);
+      }
+    }
+  }
+  function applyStampLinkState(currentFileHash) {
+    const notice = stampLinkNotice(currentStampLink(), currentFileHash);
+    renderStampLinkBanner(notice);
+    return notice;
+  }
+  applyStampLinkState(null);
+  window.addEventListener('hashchange', () => {
+    const notice = applyStampLinkState(fileHash);
+    if (fileHash) $('go').disabled = !notice.canStamp;
+  });
   drop.addEventListener('click', () => input.click());
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
@@ -1846,7 +2013,9 @@ const TRUST_FILES = { 'freetsa-cacert.pem': utf8(TRUST.rootPem), 'freetsa-tsa.cr
       $('fileinfo').hidden = false; $('hash').textContent = fileHash; $('size').textContent = `${f.size.toLocaleString()} bytes · ${f.name}`;
       $('c2pa').textContent = !c2pa.present ? 'None found' : c2pa.error ? 'Present but could not be read: ' + c2pa.error : `Found (${c2pa.manifestCount}): ${[c2pa.active.generator, c2pa.active.signer && 'signer ' + c2pa.active.signer].filter(Boolean).join(' · ')}. Read only — not independently checked.`;
       drop.classList.add('has-file');
-      drop.querySelector('strong').textContent = f.name; $('status').textContent = ''; $('go').disabled = false;
+      drop.querySelector('strong').textContent = f.name; $('status').textContent = '';
+      const notice = applyStampLinkState(fileHash);
+      $('go').disabled = !notice.canStamp;
     } catch (e) {
       $('status').textContent = '';
       $('result').textContent = '';

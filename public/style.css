@@ -140,3 +140,26 @@ footer{margin-top:3rem;color:var(--muted);font-size:.9rem;border-top:1px solid v
 .how-check p{color:var(--muted)}
 #result .share-link{margin:.85rem 0 0;color:var(--ink)}
 #result .share-link a{font-weight:700;overflow-wrap:anywhere;word-break:break-word}
+
+.expect-banner{border-radius:14px;padding:1.05rem 1.15rem;margin:0 0 1.15rem}
+.expect-banner.info{border:2px solid var(--accent);background:var(--accent-soft)}
+.expect-banner.match{border:2px solid var(--ok-line);background:var(--ok-bg)}
+.expect-banner.mismatch{border:2px solid var(--err-line);background:var(--err-bg)}
+.expect-banner strong{display:block;font-size:1.15rem;margin-bottom:.35rem}
+.expect-banner p{margin:.4rem 0 0}
+.docs-hero h1{max-width:24ch}
+.docs h2{font-size:1.35rem;letter-spacing:-.02em;margin:2.25rem 0 .7rem}
+.docs h3{font-size:1.05rem;margin:0 0 .45rem}
+.snippet-block{background:var(--surface);border:1px solid var(--line);border-radius:14px;margin:1rem 0;overflow:auto}
+.snippet-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem 1rem;border-bottom:1px solid var(--line);font-weight:650}
+.snippet-block pre{margin:0;padding:1rem 1.1rem;overflow:auto}
+.snippet-block code{display:block;background:transparent;padding:0;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+.copy-btn{font:inherit;font-weight:700;padding:.4rem .9rem;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+.copy-btn:hover{background:var(--bg-accent)}
+.live-demo{background:var(--surface);border:1px dashed var(--line);border-radius:14px;padding:1.05rem 1.15rem;margin:1rem 0 0}
+.live-demo .file-label{display:block;font-weight:650;margin:.2rem 0 .4rem}
+.live-demo input[type=file]{display:block;margin:0 0 .85rem}
+.live-row{margin:.35rem 0}
+.lightdrawer-stamp{display:inline-flex;align-items:center;gap:.5rem;font:650 1rem/1.2 system-ui,-apple-system,Segoe UI,sans-serif;color:var(--accent-ink);background:var(--accent);text-decoration:none;padding:.7rem 1.2rem;border-radius:999px}
+.lightdrawer-stamp:hover{filter:brightness(1.05);text-decoration:none}
+.lightdrawer-stamp svg{flex:0 0 auto}

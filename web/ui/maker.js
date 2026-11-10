@@ -23,6 +23,59 @@
     const s = document.createElement('script'); s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'; s.async = true; document.head.append(s);
   }
   const drop = $('drop'), input = $('file');
+  function currentStampLink() {
+    return resolveStampLink({ search: location.search, hash: location.hash });
+  }
+  function renderStampLinkBanner(notice) {
+    const box = $('expect-banner');
+    if (!box) return;
+    box.replaceChildren();
+    if (!notice || !notice.notices.length) {
+      box.hidden = true;
+      box.className = 'expect-banner';
+      return;
+    }
+    box.hidden = false;
+    const kinds = notice.notices.map((n) => n.kind);
+    box.className = 'expect-banner' + (
+      kinds.includes('mismatch') || kinds.includes('conflict') ? ' mismatch' :
+      kinds.includes('match') ? ' match' : ' info'
+    );
+    for (const n of notice.notices) {
+      const h = document.createElement('strong');
+      h.textContent = n.title;
+      box.append(h);
+      const p = document.createElement('p');
+      p.textContent = n.body;
+      box.append(p);
+      if (n.hash || n.expected) {
+        const row = document.createElement('p');
+        row.append('Expected fingerprint: ');
+        const code = document.createElement('code');
+        code.textContent = n.hash || n.expected;
+        row.append(code);
+        box.append(row);
+      }
+      if (n.actual) {
+        const row = document.createElement('p');
+        row.append('This file’s fingerprint: ');
+        const code = document.createElement('code');
+        code.textContent = n.actual;
+        row.append(code);
+        box.append(row);
+      }
+    }
+  }
+  function applyStampLinkState(currentFileHash) {
+    const notice = stampLinkNotice(currentStampLink(), currentFileHash);
+    renderStampLinkBanner(notice);
+    return notice;
+  }
+  applyStampLinkState(null);
+  window.addEventListener('hashchange', () => {
+    const notice = applyStampLinkState(fileHash);
+    if (fileHash) $('go').disabled = !notice.canStamp;
+  });
   drop.addEventListener('click', () => input.click());
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
@@ -45,7 +98,9 @@
       $('fileinfo').hidden = false; $('hash').textContent = fileHash; $('size').textContent = `${f.size.toLocaleString()} bytes · ${f.name}`;
       $('c2pa').textContent = !c2pa.present ? 'None found' : c2pa.error ? 'Present but could not be read: ' + c2pa.error : `Found (${c2pa.manifestCount}): ${[c2pa.active.generator, c2pa.active.signer && 'signer ' + c2pa.active.signer].filter(Boolean).join(' · ')}. Read only — not independently checked.`;
       drop.classList.add('has-file');
-      drop.querySelector('strong').textContent = f.name; $('status').textContent = ''; $('go').disabled = false;
+      drop.querySelector('strong').textContent = f.name; $('status').textContent = '';
+      const notice = applyStampLinkState(fileHash);
+      $('go').disabled = !notice.canStamp;
     } catch (e) {
       $('status').textContent = '';
       $('result').textContent = '';

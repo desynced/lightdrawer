@@ -11,6 +11,7 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
 //   GET  /?digest=<hex>      -> 302 redirect to /r/<digest>
+//   GET  /?expect=<hex>      -> homepage (browser compares the dropped file hash; not a Worker lookup)
 //   GET  /api/lookup?digest=<hex>  -> same record as JSON
 //   GET  /api/config         -> { turnstileSiteKey }
 const CALENDARS = ['https://a.pool.opentimestamps.org', 'https://b.pool.opentimestamps.org', 'https://a.pool.eternitywall.com'];

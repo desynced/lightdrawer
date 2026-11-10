@@ -32,6 +32,7 @@
   <nav aria-label="Primary">
     <a href="/" aria-current="page">Make a receipt</a>
     <a href="/verify.html">Check a receipt</a>
+    <a href="/button">Add a button</a>
   </nav>
 </header>
 
@@ -46,6 +47,7 @@
     </svg>
     <span><strong>Your file never leaves your device.</strong> Only a fingerprint — a short unique code of the file — is sent to independent witnesses.</span>
   </p>
+  <div id="expect-banner" class="expect-banner" hidden role="status" aria-live="polite"></div>
   <div class="drop" id="drop" tabindex="0" role="button" aria-label="Drop a file here or click to choose">
     <svg class="drop-icon" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
       <rect x="10" y="6" width="22" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -192,6 +194,10 @@
     <p>They open the checker included in the receipt (or use <a href="/verify.html">Check a receipt</a> on this site), drop in the receipt and the original file, and see whether the file still matches and when it was recorded.</p>
   </details>
   <details>
+    <summary>Can I add a button to my website?</summary>
+    <p>Yes. Copy a free “Stamp this with LightDrawer” link from the <a href="/button">button guide</a>. Visitors hash the file in their browser and finish here. Nothing is uploaded.</p>
+  </details>
+  <details>
     <summary>Does it cost anything?</summary>
     <p>No. LightDrawer is free. If you would like to help keep it running, you can <a href="https://paypal.me/josephball" rel="noopener">support it here</a>.</p>
   </details>
@@ -211,7 +217,7 @@
 </details>
 </main>
 
-<footer>No accounts. No file storage. Only fingerprints are sent to independent witnesses. <a href="https://paypal.me/josephball" rel="noopener">Support LightDrawer</a>.</footer>
+<footer>No accounts. No file storage. Only fingerprints are sent to independent witnesses. <a href="/button">Add a stamp button to your site</a>. <a href="https://paypal.me/josephball" rel="noopener">Support LightDrawer</a>.</footer>
 <script src="/app.js"></script>
 </body>
 </html>

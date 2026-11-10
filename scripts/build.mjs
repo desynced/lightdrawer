@@ -30,7 +30,8 @@ if (existsSync(join(root, 'web/ui/verify.html'))) {
   writeFileSync(join(root, 'public/verify.html'), html);
 }
 if (existsSync(join(root, 'web/ui/index.html'))) {
-  writeFileSync(join(root, 'public/app.js'), `'use strict';\n${core}\n${rd('web/ui/maker.js')}\n`);
+  const stampLink = rd('src/stamp-link.js').replace(/^export /gm, '');
+  writeFileSync(join(root, 'public/app.js'), `'use strict';\n${core}\n${stampLink}\n${rd('web/ui/maker.js')}\n`);
   writeFileSync(join(root, 'public/index.html'), rd('web/ui/index.html'));
   writeFileSync(join(root, 'public/style.css'), rd('web/ui/style.css'));
   writeFileSync(join(root, 'public/_headers'), rd('web/ui/_headers'));
@@ -44,6 +45,12 @@ if (existsSync(join(root, 'web/ui/index.html'))) {
     const src = join(root, 'web/ui', f);
     if (existsSync(src)) copyFileSync(src, join(root, 'public', f));
   }
+  for (const f of ['button.html', 'button.js']) {
+    const src = join(root, 'web/ui', f);
+    if (existsSync(src)) copyFileSync(src, join(root, 'public', f));
+  }
+  const stampHelper = join(root, 'web/snippets/lightdrawer-stamp.js');
+  if (existsSync(stampHelper)) copyFileSync(stampHelper, join(root, 'public/lightdrawer-stamp.js'));
   const securityTxt = join(root, 'web/ui/.well-known/security.txt');
   if (existsSync(securityTxt)) {
     mkdirSync(join(root, 'public/.well-known'), { recursive: true });

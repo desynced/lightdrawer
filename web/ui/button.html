@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F2EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1A1814" media="(prefers-color-scheme: dark)">
+<title>Add a stamp button — LightDrawer</title>
+<meta name="description" content="Copy a free Stamp this with LightDrawer button for your website. Files are hashed in the visitor’s browser and never uploaded.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Add a stamp button — LightDrawer">
+<meta property="og:description" content="Copy a free Stamp this with LightDrawer button for your website. Files are hashed in the visitor’s browser and never uploaded.">
+<meta property="og:image" content="https://lightdrawer.org/og-image.png">
+<meta property="og:url" content="https://lightdrawer.org/button">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#snippets">Skip to copy-paste snippets</a>
+<header class="top">
+  <a class="brand" href="/" aria-label="LightDrawer home">
+    <svg class="logo-mark" viewBox="0 0 128 128" width="36" height="36" aria-hidden="true"><defs><radialGradient id="ldGlow" cx="64" cy="64" r="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFF1B8"/><stop offset="1" stop-color="#FFF1B8" stop-opacity="0"/></radialGradient></defs><circle cx="64" cy="64" r="22" fill="url(#ldGlow)" opacity=".55"/><g fill="none" stroke-linecap="round" stroke-width="7"><path d="M56 118 H40 A30 30 0 0 1 10 88 V40 A30 30 0 0 1 40 10 H88 A30 30 0 0 1 118 40 V88 A30 30 0 0 1 88 118 H72" stroke="currentColor"/><path d="M56 102 H46 A20 20 0 0 1 26 82 V46 A20 20 0 0 1 46 26 H82 A20 20 0 0 1 102 46 V82 A20 20 0 0 1 82 102 H72" stroke="currentColor"/><path d="M56 86 H52 A10 10 0 0 1 42 76 V52 A10 10 0 0 1 52 42 H76 A10 10 0 0 1 86 52 V76 A10 10 0 0 1 76 86 H72" stroke="#C9A227"/></g><circle cx="64" cy="64" r="11" fill="none" stroke="#C9A227" stroke-width="4"/><path d="M64 57 V64 L69 68" fill="none" stroke="#C9A227" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M64 86 V122" stroke="#C9A227" stroke-width="5" stroke-linecap="round"/></svg>
+    <span class="wordmark"><span class="light">Light</span><span class="drawer">Drawer</span></span>
+  </a>
+  <nav aria-label="Primary">
+    <a href="/">Make a receipt</a>
+    <a href="/verify.html">Check a receipt</a>
+    <a href="/button" aria-current="page">Add a button</a>
+  </nav>
+</header>
+
+<main class="docs">
+<section class="hero docs-hero">
+  <h1>Add a “Stamp this with LightDrawer” button</h1>
+  <p class="promise">Let people on your website timestamp a file — without uploading it, creating an account, or loading extra trackers.</p>
+  <p class="privacy">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span><strong>The file never leaves the visitor’s device.</strong> LightDrawer is free. There are no analytics scripts in these snippets, and visitors finish the stamp on this site with the usual human check.</span>
+  </p>
+</section>
+
+<section id="snippets">
+  <h2>The simple link (no JavaScript)</h2>
+  <p>This is the version most sites should use. It is a normal link. When someone clicks it, they come here, drop the file themselves, and get a receipt. You can style it however you like.</p>
+  <div class="snippet-block">
+    <div class="snippet-toolbar">
+      <span>HTML</span>
+      <button type="button" class="copy-btn" data-copy-target="snippet-link">Copy</button>
+    </div>
+<pre><code id="snippet-link">&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/" rel="noopener"&gt;
+  &lt;svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"&gt;&lt;g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"&gt;&lt;path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/&gt;&lt;path d="M64 50v16l10 6"/&gt;&lt;path d="M64 86v32"/&gt;&lt;/g&gt;&lt;circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/&gt;&lt;/svg&gt;
+  Stamp this with LightDrawer
+&lt;/a&gt;</code></pre>
+  </div>
+  <div class="snippet-block">
+    <div class="snippet-toolbar">
+      <span>Optional CSS</span>
+      <button type="button" class="copy-btn" data-copy-target="snippet-css">Copy</button>
+    </div>
+<pre><code id="snippet-css">.lightdrawer-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font: 650 1rem/1.2 system-ui, -apple-system, Segoe UI, sans-serif;
+  color: #2E2E2E;
+  background: #C9A227;
+  text-decoration: none;
+  padding: 0.7rem 1.2rem;
+  border-radius: 999px;
+}
+.lightdrawer-stamp:hover { filter: brightness(1.05); }
+.lightdrawer-stamp svg { flex: 0 0 auto; }</code></pre>
+  </div>
+  <div class="live-demo">
+    <h3>Live example</h3>
+    <p>This button uses the snippet above and opens LightDrawer on this same site.</p>
+    <a class="lightdrawer-stamp" href="/" rel="noopener">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/><path d="M64 50v16l10 6"/><path d="M64 86v32"/></g><circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/></svg>
+      Stamp this with LightDrawer
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>Warn if they drop the wrong file</h2>
+  <p>If you already know the file’s SHA-256 fingerprint — for example you published it next to a download — add it as <code>?expect=</code> plus 64 hexadecimal characters. LightDrawer will warn if the dropped file does not match, and it will not issue a receipt for the wrong file.</p>
+  <p>Use the fingerprint of the <strong>file itself</strong>, not the fingerprint from a receipt share link. Receipt links use a different hash (see below).</p>
+  <div class="snippet-block">
+    <div class="snippet-toolbar">
+      <span>HTML with an expected fingerprint</span>
+      <button type="button" class="copy-btn" data-copy-target="snippet-expect">Copy</button>
+    </div>
+<pre><code id="snippet-expect">&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/?expect=YOUR_FILE_SHA256_HERE" rel="noopener"&gt;
+  Stamp this with LightDrawer
+&lt;/a&gt;</code></pre>
+  </div>
+  <div class="live-demo">
+    <h3>Live example of the mismatch warning</h3>
+    <p>This demo expects a file whose entire contents are the three letters <code>abc</code> — no extra space or line break. Click the button, then drop any other file to see the warning.</p>
+    <a class="lightdrawer-stamp" href="/?expect=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" rel="noopener">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/><path d="M64 50v16l10 6"/><path d="M64 86v32"/></g><circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/></svg>
+      Stamp the “abc” demo file
+    </a>
+  </div>
+</section>
+
+<section>
+  <h2>Optional: hash the file on your page first</h2>
+  <p>If your page already has a file picker, a small helper script can hash the chosen file with the browser’s built-in Web Crypto and then open LightDrawer. The hash is added as <code>#digest=…</code> in the URL fragment. Browsers do not send that fragment to any server, so it does not appear in LightDrawer logs.</p>
+  <p>The visitor still drops the same file on LightDrawer to confirm it, then completes the human check here. Your page must not call <code>/api/stamp</code>, and you must not put an API key in browser code. API keys are only for a website’s own server — the same pattern Fairview uses.</p>
+  <p>Host the helper script yourself. Do not load it from lightdrawer.org on every page view; that would make your visitors request a script from us.</p>
+  <div class="snippet-block">
+    <div class="snippet-toolbar">
+      <span>HTML</span>
+      <button type="button" class="copy-btn" data-copy-target="snippet-embed">Copy</button>
+    </div>
+<pre><code id="snippet-embed">&lt;label for="file-to-stamp"&gt;Choose a file to stamp&lt;/label&gt;
+&lt;input id="file-to-stamp" type="file"&gt;
+&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/" data-lightdrawer-file="file-to-stamp" data-lightdrawer-status="stamp-status" rel="noopener"&gt;
+  Stamp this with LightDrawer
+&lt;/a&gt;
+&lt;p id="stamp-status"&gt;&lt;/p&gt;
+&lt;script src="lightdrawer-stamp.js" defer&gt;&lt;/script&gt;</code></pre>
+  </div>
+  <p><a href="/lightdrawer-stamp.js" download>Download lightdrawer-stamp.js</a> and serve it from your own site, next to the page or at whatever path you prefer. The script uses <code>addEventListener</code> only — no inline event handlers — so it works with a strict Content-Security-Policy.</p>
+  <p class="mut">Very large files may use more memory in this helper because it reads the file in one go. For huge videos, use the simple link above instead; LightDrawer itself hashes files in 4&nbsp;MB chunks.</p>
+  <div class="live-demo">
+    <h3>Live example</h3>
+    <p>Choose a file here. The helper hashes it in this browser, then opens LightDrawer with that fingerprint in the fragment. You will still confirm the file on the next page.</p>
+    <label class="file-label" for="docs-file-to-stamp">Choose a file to stamp</label>
+    <input id="docs-file-to-stamp" type="file">
+    <div class="live-row">
+      <a class="lightdrawer-stamp" href="/" data-lightdrawer-file="docs-file-to-stamp" data-lightdrawer-status="docs-stamp-status" rel="noopener">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/><path d="M64 50v16l10 6"/><path d="M64 86v32"/></g><circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/></svg>
+        Stamp this with LightDrawer
+      </a>
+    </div>
+    <p id="docs-stamp-status" class="mut" role="status"></p>
+  </div>
+</section>
+
+<section>
+  <h2>Check a receipt</h2>
+  <p>If you already have a LightDrawer receipt fingerprint — the long code from the share link, which is the SHA-256 of <code>statement.json</code>, not of the original file — you can link straight to the public lookup page.</p>
+  <div class="snippet-block">
+    <div class="snippet-toolbar">
+      <span>HTML</span>
+      <button type="button" class="copy-btn" data-copy-target="snippet-check">Copy</button>
+    </div>
+<pre><code id="snippet-check">&lt;a href="https://lightdrawer.org/r/RECEIPT_FINGERPRINT_HERE" rel="noopener"&gt;Check this LightDrawer receipt&lt;/a&gt;</code></pre>
+  </div>
+  <p>People can also drop a receipt file on <a href="/verify.html">Check a receipt</a>. Do not put a file’s SHA-256 in <code>/r/…</code> or in <code>?digest=</code> — those addresses look up a receipt fingerprint. A <code>?digest=</code> link redirects to the lookup page; it is not a file-hash hint. Use <code>?expect=</code> or <code>#digest=</code> when you mean the original file.</p>
+</section>
+
+<section class="faq" aria-labelledby="button-faq">
+  <h2 id="button-faq">Good to know</h2>
+  <details open>
+    <summary>What these snippets never do</summary>
+    <p>They never upload the file. They never talk to <code>/api/stamp</code> from your page. They do not add analytics. There is no <code>return=</code> parameter that sends people back to your site automatically — that kind of redirect is easy to abuse. After they download the receipt, they can use the browser’s back button.</p>
+  </details>
+  <details>
+    <summary>Can I open LightDrawer in a new tab?</summary>
+    <p>Yes. Add <code>target="_blank" rel="noopener noreferrer"</code> to the link. The helper script respects <code>target="_blank"</code>.</p>
+  </details>
+  <details>
+    <summary>Where is the longer technical write-up?</summary>
+    <p>See <a href="https://github.com/desynced/lightdrawer/blob/main/HOW-IT-WORKS.md">HOW-IT-WORKS</a> and the README section “Add a stamp button to your website.” A standalone demo page that pretends to be another site is in <code>examples/stamp-button/example.html</code> in the repository.</p>
+  </details>
+</section>
+</main>
+
+<footer>No accounts. No file storage. Only fingerprints are sent to independent witnesses. <a href="https://paypal.me/josephball" rel="noopener">Support LightDrawer</a>.</footer>
+<script src="/lightdrawer-stamp.js" defer></script>
+<script src="/button.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo Downloads — example website</title>
+<meta name="description" content="A stand-in webpage showing how another site can add a Stamp this with LightDrawer button.">
+<style>
+  :root { color-scheme: light dark; --bg: #f6f8fb; --ink: #1c2430; --mut: #5b6777; --line: #d5dde8; --card: #fff; --accent: #2457c5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151921; --ink: #e8edf5; --mut: #a7b0bd; --line: #2c3440; --card: #1d2430; --accent: #8bb4ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 44rem; padding: 2rem 1.15rem 4rem; font: 16px/1.55 system-ui, -apple-system, Segoe UI, sans-serif; color: var(--ink); background: var(--bg); }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .kicker { text-transform: uppercase; letter-spacing: .08em; font-size: .78rem; color: var(--mut); font-weight: 700; }
+  h1 { font-size: 1.85rem; line-height: 1.2; margin: .25rem 0 .5rem; }
+  p { color: var(--ink); }
+  .mut { color: var(--mut); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.15rem 1.2rem; margin: 1.25rem 0; }
+  .card h2 { margin: 0 0 .45rem; font-size: 1.15rem; }
+  label { display: block; font-weight: 650; margin: .7rem 0 .35rem; }
+  input[type=file] { display: block; margin-bottom: .85rem; }
+  .lightdrawer-stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font: 650 1rem/1.2 system-ui, -apple-system, Segoe UI, sans-serif;
+    color: #2E2E2E;
+    background: #C9A227;
+    text-decoration: none;
+    padding: 0.7rem 1.2rem;
+    border-radius: 999px;
+  }
+  .lightdrawer-stamp:hover { filter: brightness(1.05); }
+  .lightdrawer-stamp svg { flex: 0 0 auto; }
+  .check-link { font-weight: 650; }
+  code { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  footer { margin-top: 2.5rem; color: var(--mut); font-size: .9rem; }
+</style>
+</head>
+<body>
+<header>
+  <p class="kicker">Example website — not LightDrawer</p>
+  <h1>Demo Downloads</h1>
+  <p class="mut">This page stands in for any site that wants a “Stamp this with LightDrawer” button. The file stays in your browser. The snippets themselves do not call LightDrawer’s stamp API or use an API key.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>A file you can try</h2>
+    <p>Download this short text file, or choose it in the picker below.</p>
+    <p><a href="sample.txt" download>Download sample.txt</a></p>
+    <p class="mut">Its SHA-256 fingerprint is <code>078f28349dca9d925f4a9ccc012ae3d02dd03fc7ae02a875804348c941edf334</code>.</p>
+  </section>
+
+  <section class="card">
+    <h2>Simple link, no JavaScript</h2>
+    <p>This button opens LightDrawer and asks it to expect the sample file’s fingerprint. If you drop a different file there, you should see a warning.</p>
+    <a class="lightdrawer-stamp" href="https://lightdrawer.org/?expect=078f28349dca9d925f4a9ccc012ae3d02dd03fc7ae02a875804348c941edf334" rel="noopener">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/><path d="M64 50v16l10 6"/><path d="M64 86v32"/></g><circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/></svg>
+      Stamp this with LightDrawer
+    </a>
+  </section>
+
+  <section class="card">
+    <h2>Hash the file here, then finish on LightDrawer</h2>
+    <p>Choose a file (try <code>sample.txt</code>). A helper script hosted on <em>this</em> page hashes it and opens LightDrawer with <code>#digest=…</code>, which is not sent to any server. You still confirm the file and complete the check on LightDrawer.</p>
+    <label for="file-to-stamp">Choose a file to stamp</label>
+    <input id="file-to-stamp" type="file">
+    <a class="lightdrawer-stamp" href="https://lightdrawer.org/" data-lightdrawer-file="file-to-stamp" data-lightdrawer-status="stamp-status" rel="noopener">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/><path d="M64 50v16l10 6"/><path d="M64 86v32"/></g><circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/></svg>
+      Stamp this with LightDrawer
+    </a>
+    <p id="stamp-status" class="mut" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>Check a receipt</h2>
+    <p>A receipt lookup uses the fingerprint from the share link (the SHA-256 of <code>statement.json</code>), not the file hash above. After you have a receipt, the link looks like this:</p>
+    <p><a class="check-link" href="https://lightdrawer.org/r/RECEIPT_FINGERPRINT_HERE" rel="noopener">Check this LightDrawer receipt</a></p>
+    <p class="mut">That placeholder will not find a record until you replace it with a real receipt fingerprint. You can also <a href="https://lightdrawer.org/verify.html">drop a receipt file on LightDrawer</a>.</p>
+  </section>
+</main>
+
+<footer>This is a demo host page from the LightDrawer repository (<code>examples/stamp-button/</code>). It is not the LightDrawer website.</footer>
+<script src="lightdrawer-stamp.js" defer></script>
+<script src="example-demo.js" defer></script>
+</body>
+</html>

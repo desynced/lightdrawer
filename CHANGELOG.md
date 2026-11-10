@@ -8,7 +8,8 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- Websites can add a free “Stamp this with LightDrawer” link or a small helper they host themselves. A plain-language guide is at `/button`, with a standalone demo in `examples/stamp-button/`. The usual version is a normal HTML link. An optional `?expect=` query (the file’s SHA-256) makes LightDrawer warn if a different file is dropped; an optional helper can pass that same file hash in the URL fragment (`#digest=…`) so it never reaches a server log. Visitors still confirm the file and complete the human check on LightDrawer. Embedded pages do not call `/api/stamp`, and API keys stay on site servers only.
 
 ## [1.2.2] - 2026-11-10
 

@@ -26,6 +26,16 @@ Optional notes about where a file came from can be included. They are saved with
 
 A longer, precise walkthrough — what leaves your device, how each proof is built, what is stored, and how to check a receipt with ordinary tools — is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md). What's new, including how the live site is run, is listed in the [changelog](CHANGELOG.md).
 
+## Add a stamp button to your website
+
+You can add a free “Stamp this with LightDrawer” link so visitors can timestamp a file without uploading it. The usual version is a plain HTML link — no JavaScript and no script loaded from this site. A copy-paste guide, including optional CSS and live examples, is at [lightdrawer.org/button](https://lightdrawer.org/button). A standalone demo that pretends to be another website lives in [`examples/stamp-button/example.html`](examples/stamp-button/example.html).
+
+If you already know the file’s SHA-256, add `?expect=<64-hex>` so LightDrawer warns when someone drops a different file. That value is the hash of the **file itself**. Do not put it in `/?digest=` or `/r/…`: those addresses look up a receipt fingerprint, which for a receipt made on this site is the SHA-256 of `statement.json`.
+
+An optional helper script, which you host on your own origin, can hash a file the visitor already chose and open LightDrawer with `#digest=<64-hex>`. Browsers do not send URL fragments to any server. The visitor still drops the same file on LightDrawer to confirm it (receipts keep the existing `statement.json` format) and still completes the human check there.
+
+Do not call `/api/stamp` from another website’s page, and do not put a LightDrawer API key in browser code. API keys are only for your own server (the same pattern Fairview uses). There is no `return=` redirect back to the host site, so the link cannot be used as an open redirect.
+
 ## What's in the receipt
 
 ```
@@ -195,6 +205,7 @@ Or open `verify.html` (works from `file://`; sends nothing unless you opt in to 
 - `examples/demo/harbor-photo.jpg` — sample file used in the demo (plus an edited copy that fails verification).
 - `examples/c2pa-sample-receipt/` — browser-made receipt for the C2PA test image (with provenance fields).
 - `examples/selftest-receipt/` — receipt from `npm run test:live` plus its original file.
+- `examples/stamp-button/` — a demo host page with copy-paste stamp and receipt-check buttons (does not include receipt ZIP files).
 - `examples/*.png` — screenshots of the maker, verifier, and cover page.
 
 ## Support

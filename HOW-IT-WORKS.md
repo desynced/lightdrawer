@@ -76,6 +76,24 @@ The time on the page is as honest as the stored data allows. While the digest is
 
 The fingerprint in the URL is whatever was posted to `/api/stamp`. For a receipt made on this site, that is `SHA-256(statement.json)`, not the hash of the original file alone.
 
+### Stamp button for other websites
+
+Other sites can link to LightDrawer with a plain HTML “Stamp this with LightDrawer” button. The public guide is `/button` (`web/ui/button.html`). The recommended snippet is a same-document `<a href="https://lightdrawer.org/">` with optional CSS — no JavaScript, and no third-party script loaded from LightDrawer on the host page.
+
+Optional context:
+
+- `GET /?expect=<64-hex>` — the host already knows the file’s SHA-256 (for example it published that hash next to a download). The homepage is still a static page; the Worker does not treat `expect` as a lookup. The browser compares the dropped file’s hash with `expect` and, on a mismatch, shows a warning and leaves “Get your receipt” disabled. Invalid values (anything other than 64 hex characters) are ignored and never written into the page as raw HTML.
+- `#digest=<64-hex>` — an optional helper the host serves itself (`web/snippets/lightdrawer-stamp.js`, copied to `/lightdrawer-stamp.js` for download) hashes a chosen file with Web Crypto and opens the link’s `href` with that fragment. URL fragments are not sent to the server, so this hash does not appear in Worker or request logs. If both `expect` and `#digest=` are present and disagree, the fragment wins and the page also warns that the link is inconsistent.
+- `GET /r/<64-hex>` — “Check this LightDrawer receipt.” The hex must be a receipt fingerprint (`SHA-256(statement.json)`), the same value used by the share link.
+
+`/?digest=<64-hex>` remains the existing 302 to `/r/<digest>` and must not be used as a file-hash hint.
+
+The helper never calls `/api/stamp` and never sends an API key. `/api/stamp` stays same-origin with no CORS headers. A Bearer API key is still only for a site’s own server (for example Fairview), not for JavaScript running in another page. Finishing a receipt still needs the original file on lightdrawer.org so `statement.json` can be built the usual way (`file → sha256 → statement.json → sha256 → proofs`). A pre-supplied file hash is treated as an expected fingerprint to confirm against, not as a substitute for dropping the file.
+
+There is no `return=` parameter. Sending the browser back to an arbitrary host URL after a stamp would be an open redirect.
+
+Snippet HTML uses no inline event handlers. Copy buttons on `/button` live in `web/ui/button.js` and the helper uses `addEventListener`, so both work under a Content-Security-Policy that forbids inline scripts.
+
 ### What never goes to LightDrawer
 
 Optional Sigstore Rekor submission is done **by the browser, straight to** `https://rekor.sigstore.dev/api/v1/log/entries`. The Worker never sees that hash a second time. Rekor is off by default because the entry is public and permanent.
