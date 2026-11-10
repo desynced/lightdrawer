@@ -54,7 +54,14 @@
       <button type="button" class="copy-btn" data-copy-target="snippet-link">Copy</button>
     </div>
 <pre><code id="snippet-link">&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/" rel="noopener"&gt;
-  &lt;svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"&gt;&lt;g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"&gt;&lt;path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/&gt;&lt;path d="M64 50v16l10 6"/&gt;&lt;path d="M64 86v32"/&gt;&lt;/g&gt;&lt;circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/&gt;&lt;/svg&gt;
+  &lt;svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 128 128" aria-hidden="true"&gt;
+    &lt;g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"&gt;
+      &lt;path d="M56 118H40A30 30 0 0 1 10 88V40A30 30 0 0 1 40 10h48A30 30 0 0 1 118 40v48A30 30 0 0 1 88 118H72"/&gt;
+      &lt;path d="M64 50v16l10 6"/&gt;
+      &lt;path d="M64 86v32"/&gt;
+    &lt;/g&gt;
+    &lt;circle cx="64" cy="64" r="14" fill="none" stroke="currentColor" stroke-width="7"/&gt;
+  &lt;/svg&gt;
   Stamp this with LightDrawer
 &lt;/a&gt;</code></pre>
   </div>
@@ -122,7 +129,10 @@
     </div>
 <pre><code id="snippet-embed">&lt;label for="file-to-stamp"&gt;Choose a file to stamp&lt;/label&gt;
 &lt;input id="file-to-stamp" type="file"&gt;
-&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/" data-lightdrawer-file="file-to-stamp" data-lightdrawer-status="stamp-status" rel="noopener"&gt;
+&lt;a class="lightdrawer-stamp" href="https://lightdrawer.org/"
+   data-lightdrawer-file="file-to-stamp"
+   data-lightdrawer-status="stamp-status"
+   rel="noopener"&gt;
   Stamp this with LightDrawer
 &lt;/a&gt;
 &lt;p id="stamp-status"&gt;&lt;/p&gt;
