@@ -26,7 +26,13 @@
     "CT_HOSTNAME_SUFFIX": "ct.lightdrawer.org",
     "CT_SUB_BATCH_MS": "900000",
     "CT_ANCHOR_EVERY_MS": "21600000",
-    "CT_MAX_SANS": "100"
+    "CT_MAX_SANS": "100",
+    // Open MCP stamp lane (POST /api/mcp/stamp). "off" by default so a self-hosted
+    // deploy stays unchanged until the operator opts in. Production sets this at deploy.
+    "MCP_LANE": "off",
+    // 0 = no cap (unlimited). A positive number turns that cap on.
+    "MCP_LIMIT_IP_HOUR": "0",
+    "MCP_LIMIT_GLOBAL_DAY": "0"
   },
   "d1_databases": [
     {
@@ -45,7 +51,8 @@
   "ratelimits": [
     { "name": "STAMP_LIMITER", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
     { "name": "STAMP_AUTH_LIMITER", "namespace_id": "4103", "simple": { "limit": 20, "period": 60 } },
-    { "name": "UPGRADE_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+    { "name": "UPGRADE_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } },
+    { "name": "MCP_STAMP_LIMITER", "namespace_id": "4104", "simple": { "limit": 5, "period": 10 } }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   // Add custom-domain routes when you want the Worker on your own domain, e.g.:

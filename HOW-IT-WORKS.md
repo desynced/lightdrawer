@@ -43,6 +43,36 @@ The Worker then, for that 32-byte digest only:
 
 The JSON response is `{ "ots": { "<calendar url>": "<base64>" }, "tsr": "<base64 or null>", "errors": [] }`. The browser merges those into the receipt ZIP on your device.
 
+### Open MCP stamp lane
+
+`POST /api/mcp/stamp` is a separate entrance used by the [LightDrawer MCP server](https://github.com/desynced/lightdrawer-mcp) (and any similar local tool). It exists so a developer’s AI client can stamp a hash without a browser human check and without sharing an API key.
+
+Request body (same shape as a keyed `/api/stamp`, no `Authorization` header, no Turnstile token):
+
+```json
+{
+  "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tsq": "MHsCAQEwMTANBglghkgBZQMEAgEFAAQg47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFWgCQIBAf8EBQEB/wEBhAMhAP8="
+}
+```
+
+`tsq` is optional, with the same size and “must contain this digest” checks as `/api/stamp`. The body cap is the same (413 if the request is too large). A digest that is not 64 lowercase hex characters, bad JSON, or a bad `tsq` is HTTP 400. The success body is the same `{ "ots", "tsr", "errors" }` object; the MCP client treats that as success and shows `https://lightdrawer.org/r/<hash>`.
+
+This path sends no CORS headers, the same as `/api/stamp`. The MCP client runs as a local server, so it does not need CORS.
+
+The lane is off unless the Worker var `MCP_LANE` is `on`. When it is off, the response is HTTP 404 `{"error":"not found"}` so the MCP tool silently falls back to a browser link. Setting `mcp_lane=off` in the `ct_meta` table has the same effect immediately, without a redeploy.
+
+When the lane is on, a short burst guard (`MCP_STAMP_LIMITER`, 5 requests per 10 seconds) is always enforced, so a flood cannot punch through to the public calendars and FreeTSA. Hourly and daily caps are optional:
+
+- `MCP_LIMIT_IP_HOUR` — stamps per UTC hour from one address. `0` means off (unlimited).
+- `MCP_LIMIT_GLOBAL_DAY` — stamps per UTC day for the whole lane. `0` means off (unlimited).
+
+The hosted site starts with both caps off. The operator can turn a cap on by setting a positive number, or switch the whole lane off, at any time. Hitting the burst guard or an enabled cap returns HTTP 429 `{"error":"Too many requests. Try again later."}` with a `Retry-After` header. The MCP client then falls back to the browser.
+
+Raw IP addresses are not stored. When the hourly cap is off, no per-address counter row is written at all. When it is on, a per-address counter is keyed by HMAC-SHA256 of the IP and the current UTC day. The HMAC key is the `MCP_IP_SALT` secret if present; otherwise it is derived from `CT_TICK_SECRET` with a domain-separation string so production can run without an extra secret. Local development with neither secret uses a fixed dev-only string. Rows live only as long as they are needed (the current UTC hour for per-address counts, the current UTC day for the global total) and are deleted by the existing 15-minute cron.
+
+`/api/stamp` is not changed: browsers still need Turnstile when it is configured, and trusted servers still use Bearer API keys.
+
 ### Upgrade requests (from `verify.html`, including `file://`)
 
 OpenTimestamps, after the calendars have had time to land in Bitcoin (usually 1–6 hours):
@@ -158,8 +188,8 @@ Stated against the code, not against a wish list.
 | Browser / receipt ZIP | The only full record: `statement.json`, proofs, cover page, `verify.html`. The original file is not copied into the ZIP. | You keep it. |
 | `POST /api/stamp` handling | The JSON body (`digest`, `tsq`, optional Turnstile token) exists in memory for the request. | Dropped when the request ends. |
 | OpenTimestamps calendars / FreeTSA / Rekor | Whatever those services retain about a hash they were sent. | Their policies, not ours. |
-| Worker rate limiting | `src/worker.js` reads `CF-Connecting-IP` (or the string `local`) and passes `stamp:<ip>`, `upgrade:<ip>`, or `ct-upgrade:<ip>` to Cloudflare's rate-limit binding (10/minute for stamp, 60/minute for upgrades). A request that presents a Bearer header is first limited per IP with `stamp:auth:<ip>` (20/minute via `STAMP_AUTH_LIMITER`) before any D1 key lookup. A trusted caller authenticated with an API key then uses `stamp:key:<id>` instead of `stamp:<ip>`, still 10/minute, so one caller does not share the visitor IP bucket. | LightDrawer code does not write that IP to disk, D1, a log file, or the receipt. The binding is Cloudflare's in-memory limiter. Cloudflare's own edge may retain request logs as part of running any Worker; that is outside this repository. |
-| Worker `CT_DB` (D1 `lightdrawer-ct`) | `ct_pending(digest, received_at)` on stamp; closed batches, leaf lists, Merkle paths, issued certificate PEMs, and a small ACME account/issuance state so `/api/ct/upgrade` can answer and so a two-phase DNS-01 issuance can resume. `stamp_keys` holds API key hashes, labels, and optional revoke timestamps for trusted server callers — never the plaintext key. The public `/r/<digest>` page reads the same tables (never files or receipts). | A digest is removed from `ct_pending` when it is sealed into a closed sub-batch, and `received_at` goes with it. After that, the lookup page can only honestly say the fingerprint was received in that batch's `opened_at`–`closed_at` window. The closed batch **keeps** its leaf list (the hashes that were in that window) so a later upgrade or lookup can still find it. LightDrawer does not currently delete those closed-batch records; deleting them would make late upgrades impossible. The file is never stored. The ACME account JWK lives in `ct_meta` so the Worker does not register a new Let's Encrypt account on every tick. A revoked stamp key stays in the table with `revoked_at` set so the same hash cannot be reused. |
+| Worker rate limiting | `src/worker.js` reads `CF-Connecting-IP` (or the string `local`) and passes `stamp:<ip>`, `upgrade:<ip>`, `ct-upgrade:<ip>`, or `mcp-stamp:<ip>` to Cloudflare's rate-limit binding (10/minute for stamp, 60/minute for upgrades, 5 per 10 seconds for the MCP lane burst guard). A request that presents a Bearer header is first limited per IP with `stamp:auth:<ip>` (20/minute via `STAMP_AUTH_LIMITER`) before any D1 key lookup. A trusted caller authenticated with an API key then uses `stamp:key:<id>` instead of `stamp:<ip>`, still 10/minute, so one caller does not share the visitor IP bucket. | LightDrawer code does not write that IP to disk, D1, a log file, or the receipt. The binding is Cloudflare's in-memory limiter. Cloudflare's own edge may retain request logs as part of running any Worker; that is outside this repository. |
+| Worker `CT_DB` (D1 `lightdrawer-ct`) | `ct_pending(digest, received_at)` on stamp; closed batches, leaf lists, Merkle paths, issued certificate PEMs, and a small ACME account/issuance state so `/api/ct/upgrade` can answer and so a two-phase DNS-01 issuance can resume. `stamp_keys` holds API key hashes, labels, and optional revoke timestamps for trusted server callers — never the plaintext key. The public `/r/<digest>` page reads the same tables (never files or receipts). `mcp_lane_usage` holds counters for the open MCP stamp lane: a per-address hourly count keyed by HMAC-SHA256 of the IP and UTC day (never the raw IP) and a global daily count. `ct_meta` may also hold `mcp_lane=off` to disable that lane without a redeploy. | A digest is removed from `ct_pending` when it is sealed into a closed sub-batch, and `received_at` goes with it. After that, the lookup page can only honestly say the fingerprint was received in that batch's `opened_at`–`closed_at` window. The closed batch **keeps** its leaf list (the hashes that were in that window) so a later upgrade or lookup can still find it. LightDrawer does not currently delete those closed-batch records; deleting them would make late upgrades impossible. The file is never stored. The ACME account JWK lives in `ct_meta` so the Worker does not register a new Let's Encrypt account on every tick. A revoked stamp key stays in the table with `revoked_at` set so the same hash cannot be reused. MCP lane counter rows are deleted by the 15-minute cron once their hour or day bucket has expired. |
 | `scripts/ct-anchor.mjs` state file (`build/ct-state.json` on the machine that runs it) | The same queue and batch records, for the prototype runner. | Pending queue entries are removed when the sub-batch closes. Batch leaf lists and issued certs remain so `upgrade` works. `build/` is gitignored. |
 
 There are no accounts and no file uploads. Application observability (`wrangler.jsonc` has `observability.enabled`) may capture Worker traces if left on; those traces would see request metadata and the hash that was posted, not file bytes.
@@ -285,7 +315,7 @@ The certificate-log stamp depends on Let's Encrypt remaining willing to issue an
 | Service | Role in a receipt | What it sees | Do you have to trust it forever? |
 |---|---|---|---|
 | Your browser | Hashes the file, builds the statement and ZIP, verifies offline | The file, locally | You are running it |
-| LightDrawer Worker | Relays the 32-byte hash to calendars and FreeTSA; optional CT queue; OTS/CT upgrade proxy | The hash, the RFC 3161 request, your IP (for rate limits only). For a server-to-server stamp, the caller's key label is logged, not written into the receipt. | No, once you have the receipt (and an upgraded `.ots` / anchored `ct.json`) |
+| LightDrawer Worker | Relays the 32-byte hash to calendars and FreeTSA; optional CT queue; OTS/CT upgrade proxy; open MCP stamp lane | The hash, the RFC 3161 request, your IP (for rate limits only; the MCP lane stores only a keyed hash of the IP, never the raw address). For a server-to-server stamp, the caller's key label is logged, not written into the receipt. | No, once you have the receipt (and an upgraded `.ots` / anchored `ct.json`) |
 | OpenTimestamps calendars (opentimestamps.org, Eternity Wall, and others) | Accept the hash; later put a batch of hashes into Bitcoin | The hash | After Bitcoin confirmation and upgrade, no |
 | Bitcoin | Public, ordered ledger whose block headers time the upgraded `.ots` | A batch commitment, not your file | This is the trust-minimized backbone |
 | FreeTSA (freetsa.org) | RFC 3161 timestamp authority | The hash (inside the timestamp request) | Yes, you trust its key; the pinned root is in `trust/` |

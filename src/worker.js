@@ -1,4 +1,5 @@
 import { runCtTick } from './ct-runtime.js';
+import { mcpLaneGate, consumeMcpLaneQuota, pruneMcpLaneUsage } from './mcp-lane.js';
 import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey, timingSafeEqualHex } from './stamp-keys.js';
 import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
@@ -7,6 +8,7 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 // only SHA-256 fingerprints are stored for the certificate-log stamp queue.
 //   POST /api/stamp          { digest, tsq, turnstile } -> { ots: {calendar: b64}, tsr: b64, errors }
 //                            Authorization: Bearer <key> skips Turnstile for trusted callers (hash stored in D1)
+//   POST /api/mcp/stamp      { digest, tsq } -> same JSON; no Turnstile, no API key; rate-limited open lane
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
@@ -114,10 +116,14 @@ async function handleStamp(req, env, url) {
     // A TimeStampReq for SHA-256 is ~60-90 bytes; refuse anything else and anything not for this digest.
     if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400);
   }
+  return json(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+}
+
+async function performStamp(env, { digestHex, digestBytes, tsq }) {
   const errors = [], ots = {};
   const otsJobs = CALENDARS.map(async (cal) => {
     try {
-      const r = await fetch(cal + '/digest', { method: 'POST', body: digest, headers: { accept: 'application/vnd.opentimestamps.v1', 'user-agent': 'lightdrawer-proxy' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+      const r = await fetch(cal + '/digest', { method: 'POST', body: digestBytes, headers: { accept: 'application/vnd.opentimestamps.v1', 'user-agent': 'lightdrawer-proxy' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const b = new Uint8Array(await r.arrayBuffer()); if (b.length > 10000) throw new Error('response too large');
       ots[cal] = b64(b);
@@ -142,13 +148,42 @@ async function handleStamp(req, env, url) {
   // Optional CT queue: store only the 32-byte hash, and only if a D1 binding is present.
   if (env.CT_DB) {
     try {
-      await env.CT_DB.prepare('INSERT OR IGNORE INTO ct_pending (digest, received_at) VALUES (?, ?)').bind(body.digest.toLowerCase(), new Date().toISOString()).run();
+      await env.CT_DB.prepare('INSERT OR IGNORE INTO ct_pending (digest, received_at) VALUES (?, ?)').bind(digestHex.toLowerCase(), new Date().toISOString()).run();
     } catch (e) {
       console.error(JSON.stringify({ msg: 'ct queue error', error: String(e && e.message ? e.message : e) }));
       errors.push('CT queue: unavailable');
     }
   }
-  return json({ ots, tsr, errors });
+  return { ots, tsr, errors };
+}
+
+async function handleMcpStamp(req, env) {
+  const gate = await mcpLaneGate(env);
+  if (!gate.allow) {
+    if (gate.status === 404) return json({ error: 'not found' }, 404);
+    return json({ error: 'stamp lane unavailable' }, 503);
+  }
+  const ip = clientIp(req);
+  if (await limited(env.MCP_STAMP_LIMITER, 'mcp-stamp:' + ip)) {
+    return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': '10' });
+  }
+  const raw = await readLimitedText(req, MAX_BODY * 2);
+  if (raw.error) return json({ error: raw.error }, 413);
+  let body;
+  try { body = JSON.parse(raw.text); } catch { return json({ error: 'bad JSON' }, 400); }
+  if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400);
+  const digest = hexToBytes(body.digest);
+  let tsq = null;
+  if (body.tsq) {
+    try { tsq = unb64(body.tsq); } catch { return json({ error: 'bad tsq' }, 400); }
+    if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400);
+  }
+  const quota = await consumeMcpLaneQuota(env, ip);
+  if (quota.unavailable) return json({ error: 'stamp lane unavailable' }, 503);
+  if (quota.limited) {
+    return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': String(quota.retryAfter) });
+  }
+  return json(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
 }
 
 async function handleUpgrade(req, env, url, ctx) {
@@ -290,6 +325,10 @@ export default {
       // Same-origin only for browser posts (no CORS headers). A valid API key may come from another origin.
       return handleStamp(req, env, url);
     }
+    if (url.pathname === '/api/mcp/stamp') {
+      if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+      return handleMcpStamp(req, env);
+    }
     if (url.pathname === '/api/ots/upgrade') {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET', 'access-control-max-age': '86400' } });
       if (req.method !== 'GET') return json({ error: 'GET only' }, 405);
@@ -304,6 +343,7 @@ export default {
     return env.ASSETS.fetch(req);
   },
   async scheduled(event, env, ctx) {
+    await pruneMcpLaneUsage(env);
     await runCtTick(env, { force: false, includeOpen: false });
   },
 };

@@ -6,9 +6,13 @@ The code history is in the [commit log](https://github.com/desynced/lightdrawer/
 
 Version numbers follow [Semantic Versioning](https://semver.org): new features raise the middle number, and fixes raise the last.
 
-## [Unreleased]
+## [1.4.0] - 2026-11-10
 
-Nothing yet.
+### Added
+- An open stamp lane at `POST /api/mcp/stamp` for the [LightDrawer MCP server](https://github.com/desynced/lightdrawer-mcp) and similar local tools. It accepts the same hash-only body as `/api/stamp` (`digest` and optional `tsq`), with no human check and no API key. Website stamping and API-key stamping are unchanged.
+- The lane can be switched off with the `MCP_LANE` variable (HTTP 404, so MCP clients fall back to the browser) or immediately, without a redeploy, by setting `mcp_lane=off` in the `ct_meta` table.
+- Optional hourly and daily caps (`MCP_LIMIT_IP_HOUR` and `MCP_LIMIT_GLOBAL_DAY`). `0` means that cap is off (unlimited); a positive number turns it on. When a cap is off, no counter row is written for it, so no hashed-IP data is stored. The hosted site starts with both caps off. A short burst limit (5 requests per 10 seconds) sits in front to protect the public calendars and FreeTSA. If a cap or the burst guard is hit, the response is HTTP 429 with `Retry-After`.
+- When an hourly cap is on, addresses are stored only as a keyed hash for the current UTC day, never as raw IPs. Those counters are removed by the existing 15-minute cron once they expire.
 
 ## [1.3.1] - 2026-11-10
 

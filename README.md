@@ -36,6 +36,16 @@ An optional helper script, which you host on your own origin, can hash a file th
 
 Do not call `/api/stamp` from another website’s page, and do not put a LightDrawer API key in browser code. API keys are only for your own server (the same pattern Fairview uses). There is no `return=` redirect back to the host site, so the link cannot be used as an open redirect.
 
+## Stamp from an AI tool (MCP)
+
+Developers can stamp, verify, and look up fingerprints from any MCP client — Claude, Cursor, [Koru](https://github.com/koruworks/mono), and others — with a small local server: [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp). It hashes files on the developer’s own machine and sends only that hash to LightDrawer.
+
+```sh
+npx -y github:desynced/lightdrawer-mcp
+```
+
+No API key is required. Stamps go through an open lane (`POST /api/mcp/stamp`). That lane currently has no hourly or daily cap. The operator can add limits or switch it off at any time; if that happens, the tool gives a browser link instead so the person can finish on the website.
+
 ## What's in the receipt
 
 ```
@@ -125,6 +135,7 @@ The committed `wrangler.jsonc` is a template with placeholders (empty Turnstile 
 | Site (`index.html`, `app.js`, `verify.html`) | **Cloudflare Workers Static Assets** | Static; `_headers` sets CSP and other security headers |
 | Hashing, statement, ZIP, receipt assembly, local proof checks | **User's browser** (WebCrypto) | File bytes never leave the device |
 | `POST /api/stamp` | **Cloudflare Worker** (`src/worker.js`) | Forwards the 32-byte hash to OTS calendars and the RFC 3161 query to FreeTSA (they send no CORS). Browser posts are same-origin only, with Turnstile when the secret is set. Trusted server callers may send `Authorization: Bearer <key>` instead (see below). 10 req/min per IP, or per API key; Bearer attempts are also limited per IP (20/min) before the key is looked up |
+| `POST /api/mcp/stamp` | **Cloudflare Worker** (`src/worker.js`) | Same hash-only body as `/api/stamp` (`digest`, optional `tsq`), with no Turnstile and no API key. Built for the [LightDrawer MCP server](https://github.com/desynced/lightdrawer-mcp). Off until `MCP_LANE` is set to `on`. The hosted lane has no hourly or daily cap (`0` means unlimited); a short burst limit stays on. Operators can add caps or switch the lane off at any time. Over a cap: HTTP 429 with `Retry-After`. When the lane is off: HTTP 404 `{"error":"not found"}`. No CORS headers. |
 | `GET /api/ots/upgrade` | **Cloudflare Worker** | CORS `*` so `verify.html` works from `file://`; calendar host allowlist; edge-cached 1 h; 60 req/min/IP |
 | `GET /api/ct/upgrade` | **Cloudflare Worker** | CORS `*`; returns pending until the digest's batch has a stored certificate |
 | `GET /r/<fingerprint>` | **Cloudflare Worker** | Public lookup page for a stamped fingerprint. `/?digest=<fingerprint>` redirects here. Optional JSON via `Accept: application/json` or `GET /api/lookup?digest=` |
@@ -169,6 +180,30 @@ curl -sS https://lightdrawer.org/api/stamp \
 The JSON response is still `{ "ots": { … }, "tsr": null, "errors": [] }` (`tsr` is `null` when the caller omits `tsq`). An empty, unknown, or revoked Bearer key is rejected with HTTP 401 `{"error":"Invalid or revoked API key."}`. Hitting the per-key limit, or the per-IP Bearer-attempt limit, returns HTTP 429 `{"error":"Too many requests. Try again in a minute."}`. A browser request with no `Authorization` header still needs a Turnstile token when `TURNSTILE_SECRET` is set. `/api/stamp` still sends no CORS headers, so this path is for a server caller (no `Origin` header required), not for JavaScript running in another site's page.
 
 New installs that apply `schema/ct.sql` already include the `stamp_keys` table. Self-hosters who use Wrangler migrations can run `wrangler d1 migrations apply lightdrawer-ct --remote` instead of the `--file` command above.
+
+## Open MCP stamp lane
+
+The website still asks a person to pass a short human check before it will stamp. A local MCP server cannot complete that check, and sharing a single API key with every developer would be a poor fit. `POST /api/mcp/stamp` is a separate entrance for those tools.
+
+It accepts the same JSON body as a keyed `/api/stamp` request — `{ "digest": "<64 hex characters>", "tsq": "<optional base64 RFC 3161 request>" }` — and no `Authorization` header. The response on success is the same `{ "ots": { … }, "tsr": …, "errors": [] }` object. The MCP client turns that into a receipt link at `/r/<hash>`.
+
+| Status | When |
+|---|---|
+| 200 | The hash was forwarded to the calendars (and FreeTSA if `tsq` was present). Body is `{ ots, tsr, errors }`. |
+| 400 | Bad JSON, a digest that is not 64 hex characters, or a `tsq` that is not an RFC 3161 request for that digest. |
+| 413 | Request body larger than the existing stamp cap. |
+| 429 | The short burst limit was hit, or an optional hourly/daily cap (if the operator turned one on). Includes a `Retry-After` header. |
+| 404 | The lane is switched off (`MCP_LANE` is not `on`, or `ct_meta` has `mcp_lane=off`). Body is `{"error":"not found"}`, so the MCP tool falls back to a browser link. |
+| 405 | Anything other than POST (including CORS preflight). No CORS headers are sent. |
+| 503 | The lane is on but the database used for the kill-switch (and optional caps) is unavailable. The MCP tool also falls back to the browser. |
+
+The hosted lane currently has no hourly or daily cap. A short burst limit (5 requests per 10 seconds) stays on, so a flood cannot punch through to the public calendars and FreeTSA. Operators can add an hourly cap per address (`MCP_LIMIT_IP_HOUR`) or a daily cap for the whole lane (`MCP_LIMIT_GLOBAL_DAY`) without a code change — set the var to a positive number — or switch the lane off at any time. `0` means that cap is off (unlimited). When a cap is off, no counter row is written for it.
+
+The lane does not store raw IP addresses. When an hourly cap is on, each address is stored as HMAC-SHA256 of the IP and the current UTC day, keyed by the `MCP_IP_SALT` secret if set, or by a value derived from `CT_TICK_SECRET` so production needs no extra secret. Rows live only for the current hour (per address) or current UTC day (the global total) and are deleted by the existing 15-minute cron.
+
+Self-hosters: keep `MCP_LANE` at `off` in the public template (the default) until you want the lane. To turn it on, set `MCP_LANE` to `on` in your private deploy config, apply `migrations/0002_mcp_lane.sql` (or `wrangler d1 migrations apply lightdrawer-ct --remote`), and deploy. To turn it off immediately without redeploying: insert `mcp_lane=off` into `ct_meta`. Optional: `wrangler secret put MCP_IP_SALT` if you want the IP hashes keyed separately from `CT_TICK_SECRET`.
+
+`/api/stamp` is unchanged: browsers still need the human check when Turnstile is configured, and trusted servers still use their own API keys.
 
 ## Verify without LightDrawer
 

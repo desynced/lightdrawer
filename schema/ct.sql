@@ -52,3 +52,12 @@ CREATE TABLE IF NOT EXISTS stamp_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_stamp_keys_hash ON stamp_keys (key_hash);
+
+-- Open MCP stamp lane counters (hashed identifiers only; see migrations/0002_mcp_lane.sql).
+CREATE TABLE IF NOT EXISTS mcp_lane_usage (
+  key_kind TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (key_kind, key_id, bucket)
+);
