@@ -10,6 +10,7 @@ import { runReceiptLinkTests } from './receipt-link.mjs';
 import { runStampButtonTests } from './stamp-button.mjs';
 import { runSctLogKeysTests } from './sct-log-keys.mjs';
 import { runMcpLaneTests } from './mcp-lane.mjs';
+import { runStampDedupTests } from './stamp-dedup.mjs';
 import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const core = readFileSync(join(root, 'build/core.js'), 'utf8');
@@ -310,6 +311,7 @@ await runReceiptLinkTests(ok);
 await runStampButtonTests(ok);
 await runSctLogKeysTests(ok, L);
 await runMcpLaneTests(ok);
+await runStampDedupTests(ok);
 
 if (live) {
   console.log('LIVE: stamp a throwaway test file (hash only) at OpenTimestamps calendars + FreeTSA');

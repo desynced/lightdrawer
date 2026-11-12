@@ -36,7 +36,12 @@
     // A cap that is off writes no counter row. Missing or invalid values fall
     // back to these same numbers in code.
     "MCP_LIMIT_IP_HOUR": "20",
-    "MCP_LIMIT_GLOBAL_DAY": "500"
+    "MCP_LIMIT_GLOBAL_DAY": "500",
+    // Same-digest upstream cooldown for /api/stamp and /api/mcp/stamp (milliseconds).
+    // Within this window a repeat of the same SHA-256 reuses cached calendar payloads
+    // instead of calling OpenTimestamps again. A cached stamp with no TSR still calls
+    // FreeTSA when the request includes tsq. 0 turns the cooldown off.
+    "STAMP_DEDUP_MS": "3600000"
   },
   "d1_databases": [
     {

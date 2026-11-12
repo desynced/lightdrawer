@@ -6,7 +6,7 @@ The code history is in the [commit log](https://github.com/desynced/lightdrawer/
 
 Version numbers follow [Semantic Versioning](https://semver.org): new features raise the middle number, and fixes raise the last.
 
-## [1.4.1] - 2026-11-12
+## [1.5.1] - 2026-11-12
 
 ### Changed
 - The example Worker config now shows the recommended caps for a public open MCP lane: 20 stamps per hashed IP per UTC hour (`MCP_LIMIT_IP_HOUR`) and 500 stamps per UTC day for the whole lane (`MCP_LIMIT_GLOBAL_DAY`). A public lane should use those numbers or smaller ones. `0` still means that cap is off. Setting `0` is a deliberate operator choice. When a cap is off, LightDrawer writes no counter row for it. When a cap is on, the counter is still only a keyed hash of the address for the current UTC day, and the 15-minute cron still deletes expired rows.
@@ -16,10 +16,15 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - If `MCP_STAMP_LIMITER` is not bound, `POST /api/mcp/stamp` returns HTTP 503 instead of accepting the stamp. `/api/stamp` and the upgrade routes still allow a request when their own limiter binding is missing, which is how local development works today.
 
 ### Added
-- A refused MCP stamp (HTTP 429) writes one Worker warning: `{"msg":"mcp stamp limited","scope":"mcp-burst"}`, or `mcp-ip`, or `mcp-global`. The line has no IP address, digest, or key.
+- A refused MCP stamp (HTTP 429 from the burst limiter or an hourly or daily cap) writes one Worker warning: `{"msg":"mcp stamp limited","scope":"mcp-burst"}`, or `mcp-ip`, or `mcp-global`. The line has no IP address, digest, or key.
 
 ### Notes
 - This change does not deploy and does not edit the live site's settings. The hosted lane currently runs with both caps at `0` in its private config.
+
+## [1.5.0] - 2026-11-12
+
+### Added
+- A same-digest upstream cooldown for `POST /api/stamp` and `POST /api/mcp/stamp`. After a successful stamp, repeating the same SHA-256 within the window reuses the cached calendar payloads instead of calling OpenTimestamps again. A cached stamp that has no TSR still calls FreeTSA when the request includes a valid `tsq`; a returned TSR is stored on that row without changing `last_ok_at`, so the calendar cooldown is not extended. If that FreeTSA call fails, the response is still HTTP 200 with the cached `ots`, `"tsr": null`, and a FreeTSA error. A request with no `tsq` receives the cached row as stored, including a TSR when one is already there. Configure with `STAMP_DEDUP_MS` (milliseconds; default `3600000` / 1 hour). `0` turns the cooldown off. Only the digest and those proof bytes are stored in D1 (`stamp_dedup`); never file contents or raw IPs. If the cooldown is still active but no cached body is available, the response is HTTP 429 with `Retry-After`. Website Turnstile and API-key checks are unchanged and still run first on `/api/stamp`.
 
 ## [1.4.0] - 2026-11-10
 
