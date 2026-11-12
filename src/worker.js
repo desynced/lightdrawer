@@ -1,5 +1,5 @@
 import { runCtTick } from './ct-runtime.js';
-import { mcpLaneGate, consumeMcpLaneQuota, pruneMcpLaneUsage } from './mcp-lane.js';
+import { mcpLaneGate, consumeMcpLaneQuota, pruneMcpLaneUsage, recordMcp429 } from './mcp-lane.js';
 import { lookupStampDedup, pruneStampDedup, STAMP_DEDUP_ERROR, storeStampDedup, updateStampDedupTsr } from './stamp-dedup.js';
 import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey, timingSafeEqualHex } from './stamp-keys.js';
 import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
@@ -13,6 +13,10 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 //                            A cached stamp with no TSR still calls FreeTSA when the request includes tsq.
 //   POST /api/mcp/stamp      { digest, tsq } -> same JSON; no Turnstile, no API key; rate-limited open lane
 //                            Shares performStamp() and the same-digest cooldown with /api/stamp
+//   Each finished /api/stamp and /api/mcp/stamp response writes one JSON log line
+//   { msg, path, status, via, limited }. via is key, turnstile, mcp, or null.
+//   The line never includes a key id, label, digest, or IP. MCP 429s can also
+//   emit one mcp-lane-alarm warning per UTC minute per isolate.
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
@@ -94,41 +98,65 @@ function containsDigest(tsq, digest) {
   return false;
 }
 
+// One structured line per finished stamp request. Do not add key ids, labels,
+// digests, or IPs here — those stay off this line on purpose.
+function emitStampLog(env, path, meta, response) {
+  console.log(JSON.stringify({
+    msg: 'stamp',
+    path,
+    status: response.status,
+    via: meta.via,
+    limited: meta.limited,
+  }));
+  if (path === '/api/mcp/stamp' && response.status === 429) recordMcp429(env);
+  return response;
+}
+
 async function handleStamp(req, env, url) {
+  const meta = { via: null, limited: false };
+  const done = (response) => emitStampLog(env, '/api/stamp', meta, response);
   const ip = clientIp(req);
   // Any Bearer attempt is limited per IP before a D1 lookup, so junk keys cannot flood the database.
   // Prefer STAMP_AUTH_LIMITER (20/min) when bound; otherwise reuse STAMP_LIMITER.
   if (parseBearer(req.headers.get('authorization')).kind !== 'none') {
     const authLimiter = env.STAMP_AUTH_LIMITER || env.STAMP_LIMITER;
-    if (await limited(authLimiter, stampAuthLimitKey(ip))) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
+    if (await limited(authLimiter, stampAuthLimitKey(ip))) return done(json({ error: 'Too many requests. Try again in a minute.' }, 429));
   }
   const auth = await resolveStampCaller(req, env);
-  if (auth.status === 'unavailable') return json({ error: 'stamp key store unavailable' }, 503);
-  if (auth.status === 'unauthorized') return json({ error: 'Invalid or revoked API key.' }, 401);
+  if (auth.status === 'unavailable') return done(json({ error: 'stamp key store unavailable' }, 503));
+  if (auth.status === 'unauthorized') return done(json({ error: 'Invalid or revoked API key.' }, 401));
   const caller = auth.status === 'ok' ? auth.caller : null;
+  // "key" only after the key has been accepted. A rejected Bearer stays via null.
+  if (caller) meta.via = 'key';
   // Browser posts stay same-origin. A valid API key is the trust signal for server callers.
   if (!caller) {
     const origin = req.headers.get('origin');
-    if (origin && origin !== url.origin) return json({ error: 'cross-origin requests are not accepted' }, 403);
+    if (origin && origin !== url.origin) return done(json({ error: 'cross-origin requests are not accepted' }, 403));
   }
-  if (await limited(env.STAMP_LIMITER, stampLimitKey(caller, ip))) return json({ error: 'Too many requests. Try again in a minute.' }, 429);
+  if (await limited(env.STAMP_LIMITER, stampLimitKey(caller, ip))) return done(json({ error: 'Too many requests. Try again in a minute.' }, 429));
   const raw = await readLimitedText(req, MAX_BODY * 2);
-  if (raw.error) return json({ error: raw.error }, 413);
-  let body; try { body = JSON.parse(raw.text); } catch { return json({ error: 'bad JSON' }, 400); }
-  if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400);
+  if (raw.error) return done(json({ error: raw.error }, 413));
+  let body; try { body = JSON.parse(raw.text); } catch { return done(json({ error: 'bad JSON' }, 400)); }
+  if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return done(json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400));
   if (caller) {
     console.log(JSON.stringify({ msg: 'stamp key accepted', label: sanitizeLabel(caller.label), key_id: caller.id }));
   } else if (!(await turnstileOk(env, body.turnstile, ip))) {
-    return json({ error: 'Human check failed or expired. Reload and try again.' }, 403);
+    return done(json({ error: 'Human check failed or expired. Reload and try again.' }, 403));
+  } else if (env.TURNSTILE_SECRET) {
+    // Browser stamp that passed the human check. When Turnstile is not
+    // configured, turnstileOk allows the request but via stays null.
+    meta.via = 'turnstile';
   }
   const digest = hexToBytes(body.digest);
   let tsq = null;
   if (body.tsq) {
-    try { tsq = unb64(body.tsq); } catch { return json({ error: 'bad tsq' }, 400); }
+    try { tsq = unb64(body.tsq); } catch { return done(json({ error: 'bad tsq' }, 400)); }
     // A TimeStampReq for SHA-256 is ~60-90 bytes; refuse anything else and anything not for this digest.
-    if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400);
+    if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return done(json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400));
   }
-  return stampResponse(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+  const result = await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq });
+  if (result.status === 429) meta.limited = 'dedup';
+  return done(stampResponse(result));
 }
 
 function stampResponse(result) {
@@ -204,37 +232,47 @@ async function performStamp(env, { digestHex, digestBytes, tsq }) {
 }
 
 async function handleMcpStamp(req, env) {
+  const meta = { via: 'mcp', limited: false };
+  const done = (response) => emitStampLog(env, '/api/mcp/stamp', meta, response);
   const gate = await mcpLaneGate(env);
   if (!gate.allow) {
-    if (gate.status === 404) return json({ error: 'not found' }, 404);
-    return json({ error: 'stamp lane unavailable' }, 503);
+    if (gate.status === 404) return done(json({ error: 'not found' }, 404));
+    return done(json({ error: 'stamp lane unavailable' }, 503));
   }
   // Open lane requires the burst limiter binding. Missing binding: refuse the stamp.
-  if (!env.MCP_STAMP_LIMITER) return json({ error: 'stamp lane unavailable' }, 503);
+  if (!env.MCP_STAMP_LIMITER) return done(json({ error: 'stamp lane unavailable' }, 503));
   const ip = clientIp(req);
   if (await limited(env.MCP_STAMP_LIMITER, 'mcp-stamp:' + ip)) {
+    meta.limited = 'burst';
     warnMcpLimited('mcp-burst');
-    return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': '10' });
+    return done(json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': '10' }));
   }
   const raw = await readLimitedText(req, MAX_BODY * 2);
-  if (raw.error) return json({ error: raw.error }, 413);
+  if (raw.error) return done(json({ error: raw.error }, 413));
   let body;
-  try { body = JSON.parse(raw.text); } catch { return json({ error: 'bad JSON' }, 400); }
-  if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400);
+  try { body = JSON.parse(raw.text); } catch { return done(json({ error: 'bad JSON' }, 400)); }
+  if (!/^[0-9a-f]{64}$/.test(body.digest || '')) return done(json({ error: 'digest must be 64 hex chars (SHA-256)' }, 400));
   const digest = hexToBytes(body.digest);
   let tsq = null;
   if (body.tsq) {
-    try { tsq = unb64(body.tsq); } catch { return json({ error: 'bad tsq' }, 400); }
-    if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400);
+    try { tsq = unb64(body.tsq); } catch { return done(json({ error: 'bad tsq' }, 400)); }
+    if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return done(json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400));
   }
   const quota = await consumeMcpLaneQuota(env, ip);
-  if (quota.unavailable) return json({ error: 'stamp lane unavailable' }, 503);
+  if (quota.unavailable) return done(json({ error: 'stamp lane unavailable' }, 503));
   if (quota.limited) {
-    if (quota.scope === 'global') warnMcpLimited('mcp-global');
-    else if (quota.scope === 'ip') warnMcpLimited('mcp-ip');
-    return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': String(quota.retryAfter) });
+    if (quota.scope === 'global') {
+      meta.limited = 'global';
+      warnMcpLimited('mcp-global');
+    } else if (quota.scope === 'ip') {
+      meta.limited = 'ip';
+      warnMcpLimited('mcp-ip');
+    }
+    return done(json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': String(quota.retryAfter) }));
   }
-  return stampResponse(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+  const result = await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq });
+  if (result.status === 429) meta.limited = 'dedup';
+  return done(stampResponse(result));
 }
 
 async function handleUpgrade(req, env, url, ctx) {
@@ -372,12 +410,12 @@ export default {
       return handleCtTick(req, env);
     }
     if (url.pathname === '/api/stamp') {
-      if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+      if (req.method !== 'POST') return emitStampLog(env, '/api/stamp', { via: null, limited: false }, json({ error: 'POST only' }, 405));
       // Same-origin only for browser posts (no CORS headers). A valid API key may come from another origin.
       return handleStamp(req, env, url);
     }
     if (url.pathname === '/api/mcp/stamp') {
-      if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+      if (req.method !== 'POST') return emitStampLog(env, '/api/mcp/stamp', { via: 'mcp', limited: false }, json({ error: 'POST only' }, 405));
       return handleMcpStamp(req, env);
     }
     if (url.pathname === '/api/ots/upgrade') {
