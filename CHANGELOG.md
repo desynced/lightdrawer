@@ -12,6 +12,21 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - Every finished `POST /api/stamp` and `POST /api/mcp/stamp` request writes one JSON log line. The line names the path, the HTTP status, which entrance handled it (`mcp` for the open lane, `key` after a valid API key, `turnstile` after a browser human check passed), and which cap stopped it (`burst`, `ip`, `global`, `dedup`, or `false` when none of those did). A request that stops before a valid key or a passed human check is still logged, with `via` set to null. The line does not include the API key, the key id, the label, the file hash, or the IP address. Errors are included, including HTTP 4xx and 429.
 - A log warning when the open lane returns too many HTTP 429s in the current UTC minute. `MCP_ALARM_429_PER_MIN` sets the count (default 20). `0` turns the warning off. The Worker writes `{ "msg": "mcp-lane-alarm", "reason": "429-spike", "count": n }` at most once per minute on each isolate. It does not send email or Slack. The count stays in memory on that isolate and is not written to D1. The README explains how to read both lines in Cloudflare Workers Logs.
 
+## [1.5.1] - 2026-11-12
+
+### Changed
+- The example Worker config now shows the recommended caps for a public open MCP lane: 20 stamps per hashed IP per UTC hour (`MCP_LIMIT_IP_HOUR`) and 500 stamps per UTC day for the whole lane (`MCP_LIMIT_GLOBAL_DAY`). A public lane should use those numbers or smaller ones. `0` still means that cap is off. Setting `0` is a deliberate operator choice. When a cap is off, LightDrawer writes no counter row for it. When a cap is on, the counter is still only a keyed hash of the address for the current UTC day, and the 15-minute cron still deletes expired rows.
+- The MCP burst limit is about 5 requests per 10 seconds per address per location, and it is approximate. It sits in front of the hourly and daily caps. Those caps are the lasting limits.
+
+### Fixed
+- If `MCP_STAMP_LIMITER` is not bound, `POST /api/mcp/stamp` returns HTTP 503 instead of accepting the stamp. `/api/stamp` and the upgrade routes still allow a request when their own limiter binding is missing, which is how local development works today.
+
+### Added
+- A refused MCP stamp (HTTP 429 from the burst limiter or an hourly or daily cap) writes one Worker warning: `{"msg":"mcp stamp limited","scope":"mcp-burst"}`, or `mcp-ip`, or `mcp-global`. The line has no IP address, digest, or key.
+
+### Notes
+- This change does not deploy and does not edit the live site's settings. The hosted lane currently runs with both caps at `0` in its private config.
+
 ## [1.5.0] - 2026-11-12
 
 ### Added
