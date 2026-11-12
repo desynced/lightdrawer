@@ -103,7 +103,14 @@ export async function runMcpLaneTests(ok) {
   ok(defaults.ipHour === MCP_LANE_DEFAULT_IP_HOUR && defaults.globalDay === MCP_LANE_DEFAULT_GLOBAL_DAY, 'default caps are 20/hour per address and 500/day global');
   ok(mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '7', MCP_LIMIT_GLOBAL_DAY: '40' }).ipHour === 7, 'caps are configurable via vars');
   ok(mcpLaneLimits({ MCP_LIMIT_IP_HOUR: 'nope' }).ipHour === MCP_LANE_DEFAULT_IP_HOUR, 'invalid cap vars fall back to defaults');
-  ok(mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '0', MCP_LIMIT_GLOBAL_DAY: '0' }).ipHour === 0 && mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '0', MCP_LIMIT_GLOBAL_DAY: '0' }).globalDay === 0, '0 means a cap is off (unlimited)');
+  const bothOff = mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '0', MCP_LIMIT_GLOBAL_DAY: '0' });
+  ok(bothOff.ipHour === 0 && bothOff.globalDay === 0, '0 means a cap is off (unlimited)');
+  const hourOff = mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '0', MCP_LIMIT_GLOBAL_DAY: '500' });
+  ok(hourOff.ipHour === 0 && hourOff.globalDay === 500, '0 turns off only the cap set to 0; a positive daily cap stays on');
+  const dayOff = mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '20', MCP_LIMIT_GLOBAL_DAY: '0' });
+  ok(dayOff.ipHour === 20 && dayOff.globalDay === 0, 'a positive hourly cap stays on when the daily cap is 0');
+  const recommended = mcpLaneLimits({ MCP_LIMIT_IP_HOUR: '20', MCP_LIMIT_GLOBAL_DAY: '500' });
+  ok(recommended.ipHour === 20 && recommended.globalDay === 500, 'recommended production caps parse as 20 per hour and 500 per day');
   ok(secondsUntilNextUtcHour(new Date('2026-11-11T03:59:01.000Z')) === 59, 'Retry-After for the hourly cap is seconds until the next UTC hour');
   ok(secondsUntilNextUtcDay(new Date('2026-11-11T23:59:00.000Z')) === 60, 'Retry-After for the daily cap is seconds until the next UTC day');
 
@@ -141,7 +148,26 @@ export async function runMcpLaneTests(ok) {
   ok(uq1.limited === false && uq1.skipped === true && uq2.limited === false && uq3.limited === false, '0/0 caps never limit and report skipped');
   ok(unlimitedDb.state.usage.length === 0, 'unlimited caps write no counter rows');
 
+  const ipOffDb = memoryD1();
+  const ipOffQuota = { ...saltEnv, CT_DB: ipOffDb, MCP_LIMIT_IP_HOUR: '0', MCP_LIMIT_GLOBAL_DAY: '2' };
+  const io1 = await consumeMcpLaneQuota(ipOffQuota, IP, now);
+  const io2 = await consumeMcpLaneQuota(ipOffQuota, OTHER_IP, now);
+  const io3 = await consumeMcpLaneQuota(ipOffQuota, IP, now);
+  ok(io1.limited === false && io2.limited === false && io3.limited === true && io3.scope === 'global', 'daily cap still limits when the per-address cap is 0');
+  ok(ipOffDb.state.usage.every((r) => r.key_kind === 'global'), 'per-address cap of 0 writes no hashed-IP row');
+
+  const dayOffDb = memoryD1();
+  const dayOffQuota = { ...saltEnv, CT_DB: dayOffDb, MCP_LIMIT_IP_HOUR: '1', MCP_LIMIT_GLOBAL_DAY: '0' };
+  const do1 = await consumeMcpLaneQuota(dayOffQuota, IP, now);
+  const do2 = await consumeMcpLaneQuota(dayOffQuota, IP, now);
+  ok(do1.limited === false && do2.limited === true && do2.scope === 'ip', 'per-address cap still limits when the daily cap is 0');
+  ok(dayOffDb.state.usage.length === 1 && dayOffDb.state.usage[0].key_kind === 'ip' && /^[0-9a-f]{64}$/.test(dayOffDb.state.usage[0].key_id), 'daily cap of 0 writes no global row, and the address row is a hash');
+  ok(JSON.stringify(dayOffDb.state.usage).includes(IP) === false, 'a positive per-address cap still stores no raw IP');
+
   const savedFetch = globalThis.fetch;
+  const savedWarn = console.warn;
+  const warnLines = [];
+  console.warn = (...args) => { warnLines.push(args.map((a) => String(a)).join(' ')); };
   let turnstileCalls = 0;
   let calendarCalls = 0;
   globalThis.fetch = async (url) => {
@@ -282,6 +308,19 @@ export async function runMcpLaneTests(ok) {
     const burst = await mcpReq({ digest: DIGEST }, {}, { ...env, MCP_STAMP_LIMITER: mockLimiter(burstSeen, 'mcp-stamp:') });
     ok(burst.status === 429 && burst.headers.get('retry-after') === '10', 'burst limiter returns 429 with Retry-After 10');
 
+    const calendarsBeforeUnbound = calendarCalls;
+    const unboundDb = memoryD1();
+    const unboundEnv = { ...env, CT_DB: unboundDb };
+    delete unboundEnv.MCP_STAMP_LIMITER;
+    const unbound = await mcpReq({ digest: DIGEST }, {}, unboundEnv);
+    const unboundBody = await unbound.json();
+    ok(unbound.status === 503 && unboundBody.error === 'stamp lane unavailable', 'MCP limiter unbound => 503');
+    ok(calendarCalls === calendarsBeforeUnbound, 'unbound MCP limiter does not forward the digest');
+    ok(unboundDb.state.usage.length === 0 && unboundDb.state.pending.length === 0, 'unbound MCP limiter writes no counter or queue rows');
+
+    const laneOffUnbound = await mcpReq({ digest: DIGEST }, {}, { MCP_LANE: 'off', CT_DB: memoryD1() });
+    ok(laneOffUnbound.status === 404, 'lane switched off still returns 404 when the burst limiter is unbound');
+
     const exploded = memoryD1();
     exploded.prepare = function (sql) {
       if (/INSERT INTO mcp_lane_usage/.test(sql)) {
@@ -304,6 +343,17 @@ export async function runMcpLaneTests(ok) {
     }), env, { waitUntil() {} });
     ok(stampAnon.status === 403 && /Human check/.test((await stampAnon.json()).error), '/api/stamp without a key still requires Turnstile');
     ok(calendarCalls === 0, '/api/stamp does not forward a digest after a failed human check');
+
+    const stampNoLimiterEnv = { ...env };
+    delete stampNoLimiterEnv.STAMP_LIMITER;
+    const calendarsBeforeStamp = calendarCalls;
+    const stampNoLimiter = await worker.fetch(new Request('https://lightdrawer.example/api/stamp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ digest: DIGEST }),
+    }), stampNoLimiterEnv, { waitUntil() {} });
+    ok(stampNoLimiter.status === 403 && /Human check/.test((await stampNoLimiter.json()).error), '/api/stamp without STAMP_LIMITER still reaches the human check (local dev)');
+    ok(calendarCalls === calendarsBeforeStamp, '/api/stamp without STAMP_LIMITER does not forward a digest when the human check fails');
 
     const stampToken = await worker.fetch(new Request('https://lightdrawer.example/api/stamp', {
       method: 'POST',
@@ -331,7 +381,39 @@ export async function runMcpLaneTests(ok) {
     ok(db.state.usage.some((r) => r.key_kind === 'ip' && r.bucket === utcHourString(now)), 'prune keeps the current hour bucket');
     ok(db.state.usage.some((r) => r.key_kind === 'global' && r.bucket === utcDayString(now)), 'prune keeps the current day bucket');
 
+    const cronNow = new Date();
+    const cronDb = memoryD1();
+    cronDb.state.usage.push(
+      { key_kind: 'ip', key_id: 'aa', bucket: '2000-01-01T00', count: 3 },
+      { key_kind: 'ip', key_id: 'bb', bucket: utcHourString(cronNow), count: 1 },
+      { key_kind: 'global', key_id: 'all', bucket: '2000-01-01', count: 9 },
+      { key_kind: 'global', key_id: 'all', bucket: utcDayString(cronNow), count: 2 },
+    );
+    try {
+      await worker.scheduled({ cron: '*/15 * * * *' }, { CT_DB: cronDb }, { waitUntil() {} });
+    } catch {
+      // The mock database has no .all(); the certificate-log tick runs after prune.
+    }
+    ok(!cronDb.state.usage.some((r) => r.bucket === '2000-01-01T00' || r.bucket === '2000-01-01'), '15-minute cron prune deletes expired hour and day buckets');
+    ok(cronDb.state.usage.some((r) => r.key_kind === 'ip' && r.bucket === utcHourString(cronNow)), '15-minute cron prune keeps the current hour bucket');
+    ok(cronDb.state.usage.some((r) => r.key_kind === 'global' && r.bucket === utcDayString(cronNow)), '15-minute cron prune keeps the current day bucket');
+
+    ok(warnLines.length >= 3, 'a burst or cap refusal writes a warning');
+    ok(warnLines.every((line) => {
+      let parsed;
+      try { parsed = JSON.parse(line); } catch { return false; }
+      const keys = Object.keys(parsed).sort();
+      return keys.length === 2 && keys[0] === 'msg' && keys[1] === 'scope'
+        && parsed.msg === 'mcp stamp limited'
+        && (parsed.scope === 'mcp-burst' || parsed.scope === 'mcp-ip' || parsed.scope === 'mcp-global')
+        && !line.includes(IP) && !line.includes('203.0.113') && !line.includes('mcp-stamp:');
+    }), '429 warnings are { msg, scope } only, with no IP or limiter key');
+    ok(warnLines.some((line) => line.includes('"scope":"mcp-burst"')), 'burst 429 logs scope mcp-burst');
+    ok(warnLines.some((line) => line.includes('"scope":"mcp-ip"')), 'per-address 429 logs scope mcp-ip');
+    ok(warnLines.some((line) => line.includes('"scope":"mcp-global"')), 'daily 429 logs scope mcp-global');
+
   } finally {
     globalThis.fetch = savedFetch;
+    console.warn = savedWarn;
   }
 }

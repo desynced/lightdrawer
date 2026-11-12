@@ -27,12 +27,16 @@
     "CT_SUB_BATCH_MS": "900000",
     "CT_ANCHOR_EVERY_MS": "21600000",
     "CT_MAX_SANS": "100",
-    // Open MCP stamp lane (POST /api/mcp/stamp). "off" by default so a self-hosted
-    // deploy stays unchanged until the operator opts in. Production sets this at deploy.
+    // Open MCP stamp lane (POST /api/mcp/stamp). "off" until the operator opts in.
+    // Turn it on only in a private deploy config, together with the caps below.
     "MCP_LANE": "off",
-    // 0 = no cap (unlimited). A positive number turns that cap on.
-    "MCP_LIMIT_IP_HOUR": "0",
-    "MCP_LIMIT_GLOBAL_DAY": "0"
+    // Recommended for a public open lane, or set a smaller number.
+    // 20 = stamps per hashed IP per UTC hour. 500 = stamps per UTC day, whole lane.
+    // "0" turns that one cap off. Use 0 only as a deliberate operator choice.
+    // A cap that is off writes no counter row. Missing or invalid values fall
+    // back to these same numbers in code.
+    "MCP_LIMIT_IP_HOUR": "20",
+    "MCP_LIMIT_GLOBAL_DAY": "500"
   },
   "d1_databases": [
     {
@@ -48,6 +52,9 @@
   },
   // Per-location, approximate limits (Workers Rate Limiting binding). Pair with a WAF
   // rate-limiting rule on /api/* for a hard edge cap; see README.
+  // MCP_STAMP_LIMITER is 5 requests / 10 seconds per address per location. The
+  // open lane returns HTTP 503 if this binding is missing. /api/stamp still
+  // allows the request when its own limiter binding is missing (local dev).
   "ratelimits": [
     { "name": "STAMP_LIMITER", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
     { "name": "STAMP_AUTH_LIMITER", "namespace_id": "4103", "simple": { "limit": 20, "period": 60 } },

@@ -62,10 +62,18 @@ async function readLimitedText(req, maxBytes) {
   return { text: new TextDecoder().decode(out) };
 }
 
+// /api/stamp and the upgrade routes allow the request when their limiter binding
+// is missing, so local dev without that binding still works. handleMcpStamp
+// checks MCP_STAMP_LIMITER first and returns 503 when that binding is missing.
 async function limited(binding, key) {
-  if (!binding) return false; // binding absent (e.g. some local setups): rely on WAF rule instead
+  if (!binding) return false;
   const { success } = await binding.limit({ key });
   return !success;
+}
+
+// One line, no address, digest, or key. scope is mcp-burst, mcp-ip, or mcp-global.
+function warnMcpLimited(scope) {
+  console.warn(JSON.stringify({ msg: 'mcp stamp limited', scope }));
 }
 
 async function turnstileOk(env, token, ip) {
@@ -163,8 +171,11 @@ async function handleMcpStamp(req, env) {
     if (gate.status === 404) return json({ error: 'not found' }, 404);
     return json({ error: 'stamp lane unavailable' }, 503);
   }
+  // Open lane requires the burst limiter binding. Missing binding: refuse the stamp.
+  if (!env.MCP_STAMP_LIMITER) return json({ error: 'stamp lane unavailable' }, 503);
   const ip = clientIp(req);
   if (await limited(env.MCP_STAMP_LIMITER, 'mcp-stamp:' + ip)) {
+    warnMcpLimited('mcp-burst');
     return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': '10' });
   }
   const raw = await readLimitedText(req, MAX_BODY * 2);
@@ -181,6 +192,8 @@ async function handleMcpStamp(req, env) {
   const quota = await consumeMcpLaneQuota(env, ip);
   if (quota.unavailable) return json({ error: 'stamp lane unavailable' }, 503);
   if (quota.limited) {
+    if (quota.scope === 'global') warnMcpLimited('mcp-global');
+    else if (quota.scope === 'ip') warnMcpLimited('mcp-ip');
     return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': String(quota.retryAfter) });
   }
   return json(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
