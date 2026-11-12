@@ -108,7 +108,7 @@ GET /api/ots/upgrade?cal=https://alice.btc.calendar.opentimestamps.org&commitmen
 
 - `cal` must be `https://` with no path or query, and the hostname must match the Worker's calendar allowlist.
 - `commitment` is even-length hex (the pending calendar commitment, not your file).
-- The Worker proxies `GET https://{host}/timestamp/{commitment}` and may cache a successful response at the edge for one hour. A 404 from the calendar is returned as `{ "pending": true }`.
+- The Worker proxies `GET https://{host}/timestamp/{commitment}` and may cache a successful response at the edge for one hour. It does not follow redirects: a redirect is an error, not a request to the other address. A 404 from the calendar is returned as `{ "pending": true }`.
 
 Certificate-log stamp, after the next batch certificate has been issued (15-minute sub-batches; a certificate about every 6 hours):
 

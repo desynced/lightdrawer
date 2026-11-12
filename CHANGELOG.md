@@ -6,6 +6,11 @@ The code history is in the [commit log](https://github.com/desynced/lightdrawer/
 
 Version numbers follow [Semantic Versioning](https://semver.org): new features raise the middle number, and fixes raise the last.
 
+## [1.6.1] - 2026-11-12
+
+### Fixed
+- `GET /api/ots/upgrade` does not follow a redirect from an allowlisted calendar. A redirect is an error instead of a download from the other address, so this proxy cannot be pointed at an arbitrary host that way. A direct answer from the calendar is unchanged: the timestamp bytes on success, or HTTP 404 `{ "pending": true }` while the proof is still pending. `verify.html` opened from `file://` still uses this route.
+
 ## [1.6.0] - 2026-11-12
 
 ### Added
