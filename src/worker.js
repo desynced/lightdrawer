@@ -1,6 +1,6 @@
 import { runCtTick } from './ct-runtime.js';
 import { mcpLaneGate, consumeMcpLaneQuota, pruneMcpLaneUsage } from './mcp-lane.js';
-import { lookupStampDedup, pruneStampDedup, STAMP_DEDUP_ERROR, storeStampDedup } from './stamp-dedup.js';
+import { lookupStampDedup, pruneStampDedup, STAMP_DEDUP_ERROR, storeStampDedup, updateStampDedupTsr } from './stamp-dedup.js';
 import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey, timingSafeEqualHex } from './stamp-keys.js';
 import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
@@ -9,7 +9,8 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 // only SHA-256 fingerprints are stored for the certificate-log stamp queue.
 //   POST /api/stamp          { digest, tsq, turnstile } -> { ots: {calendar: b64}, tsr: b64, errors }
 //                            Authorization: Bearer <key> skips Turnstile for trusted callers (hash stored in D1)
-//                            Same-digest cooldown (STAMP_DEDUP_MS) may reuse a cached successful result
+//                            Same-digest cooldown (STAMP_DEDUP_MS) reuses cached calendar payloads.
+//                            A cached stamp with no TSR still calls FreeTSA when the request includes tsq.
 //   POST /api/mcp/stamp      { digest, tsq } -> same JSON; no Turnstile, no API key; rate-limited open lane
 //                            Shares performStamp() and the same-digest cooldown with /api/stamp
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
@@ -126,11 +127,35 @@ function stampResponse(result) {
   return json(result.body, result.status || 200, result.headers || {});
 }
 
+async function fetchFreeTsa(tsq) {
+  try {
+    const r = await fetch(TSA_URL, { method: 'POST', body: tsq, headers: { 'content-type': 'application/timestamp-query' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const b = new Uint8Array(await r.arrayBuffer()); if (b.length > 20000) throw new Error('response too large');
+    return { tsr: b64(b), error: null };
+  } catch (e) {
+    console.error(JSON.stringify({ msg: 'freetsa error', error: String(e && e.message ? e.message : e) }));
+    return { tsr: null, error: 'FreeTSA: unavailable' };
+  }
+}
+
 async function performStamp(env, { digestHex, digestBytes, tsq }) {
   const digest = String(digestHex || '').toLowerCase();
   const dedup = await lookupStampDedup(env, digest);
   if (dedup.hit) {
-    if (dedup.body) return { status: 200, body: dedup.body };
+    if (dedup.body) {
+      // Calendar payloads stay cached. A missing TSR is filled from FreeTSA only
+      // when this request brought a tsq, and that write does not move last_ok_at.
+      if (tsq && dedup.body.tsr == null) {
+        const filled = await fetchFreeTsa(tsq);
+        if (filled.tsr) await updateStampDedupTsr(env, digest, filled.tsr);
+        return {
+          status: 200,
+          body: { ots: dedup.body.ots, tsr: filled.tsr, errors: filled.error ? [filled.error] : [] },
+        };
+      }
+      return { status: 200, body: dedup.body };
+    }
     return {
       status: 429,
       body: { error: STAMP_DEDUP_ERROR },
@@ -152,15 +177,9 @@ async function performStamp(env, { digestHex, digestBytes, tsq }) {
   });
   let tsr = null;
   const tsaJob = tsq ? (async () => {
-    try {
-      const r = await fetch(TSA_URL, { method: 'POST', body: tsq, headers: { 'content-type': 'application/timestamp-query' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const b = new Uint8Array(await r.arrayBuffer()); if (b.length > 20000) throw new Error('response too large');
-      tsr = b64(b);
-    } catch (e) {
-      console.error(JSON.stringify({ msg: 'freetsa error', error: String(e && e.message ? e.message : e) }));
-      errors.push('FreeTSA: unavailable');
-    }
+    const filled = await fetchFreeTsa(tsq);
+    tsr = filled.tsr;
+    if (filled.error) errors.push(filled.error);
   })() : Promise.resolve();
   await Promise.all([...otsJobs, tsaJob]);
   // Optional CT queue: store only the 32-byte hash, and only if a D1 binding is present.

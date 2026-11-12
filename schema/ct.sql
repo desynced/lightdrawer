@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS mcp_lane_usage (
 );
 
 -- Same-digest stamp cooldown (hash + cached base64 proofs only; see migrations/0003_stamp_dedup.sql).
+-- last_ok_at is the calendar cooldown start. A later FreeTSA TSR fill-in does not move it.
 CREATE TABLE IF NOT EXISTS stamp_dedup (
   digest TEXT PRIMARY KEY,
   last_ok_at INTEGER NOT NULL,

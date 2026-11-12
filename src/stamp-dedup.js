@@ -1,6 +1,8 @@
-// Same-digest stamp cooldown: skip OpenTimestamps/FreeTSA when this SHA-256
-// was successfully stamped recently. Stores only the digest plus the base64
-// calendar/TSA payloads already returned to the client — never file bytes or IPs.
+// Same-digest stamp cooldown: skip OpenTimestamps when this SHA-256 was
+// successfully stamped recently. A cached row with no TSR still calls FreeTSA
+// when the request includes a tsq; that fill-in stores the TSR without moving
+// last_ok_at. Stores only the digest plus the base64 calendar/TSA payloads
+// already returned to the client — never file bytes or IPs.
 
 export const STAMP_DEDUP_DEFAULT_MS = 3600000; // 1 hour
 export const STAMP_DEDUP_ERROR = 'This digest was stamped recently. Try again later.';
@@ -79,6 +81,25 @@ export async function storeStampDedup(env, digestHex, { ots, tsr }, nowMs = Date
     return { stored: true };
   } catch (e) {
     console.error(JSON.stringify({ msg: 'stamp dedup store error', error: String(e && e.message ? e.message : e) }));
+    return { stored: false, error: true };
+  }
+}
+
+// Attach a TSR to an existing cooldown row. Does not change last_ok_at, so a
+// FreeTSA fill-in does not extend the calendar cooldown.
+export async function updateStampDedupTsr(env, digestHex, tsr) {
+  const windowMs = parseStampDedupMs(env);
+  if (windowMs === 0 || !env || !env.CT_DB) return { stored: false };
+  if (tsr == null || tsr === '') return { stored: false };
+  const digest = String(digestHex || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(digest)) return { stored: false };
+  try {
+    await env.CT_DB.prepare(
+      'UPDATE stamp_dedup SET tsr = ? WHERE digest = ?',
+    ).bind(String(tsr), digest).run();
+    return { stored: true };
+  } catch (e) {
+    console.error(JSON.stringify({ msg: 'stamp dedup tsr update error', error: String(e && e.message ? e.message : e) }));
     return { stored: false, error: true };
   }
 }

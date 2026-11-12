@@ -1,6 +1,7 @@
 -- Same-digest stamp cooldown (POST /api/stamp and POST /api/mcp/stamp).
--- Stores only the SHA-256 digest, the time of the last successful upstream
--- stamp, and the base64 calendar/TSA payloads already returned to the client.
+-- Stores only the SHA-256 digest, the time the calendar cooldown started
+-- (last_ok_at; a later FreeTSA fill-in does not move it), and the base64
+-- calendar/TSA payloads already returned to the client.
 -- Never stores file bytes or raw IP addresses.
 -- Apply to an existing D1 database with:
 --   wrangler d1 migrations apply lightdrawer-ct --remote
