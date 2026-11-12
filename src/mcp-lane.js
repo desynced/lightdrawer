@@ -1,6 +1,8 @@
 // Open MCP stamp lane helpers: kill switch, hashed-IP quotas, and prune.
 // Raw IP addresses are never written to D1. Counters use HMAC-SHA256(IP + UTC day).
 
+// Designed caps when the vars are unset. A public open lane should set these
+// in config (or a smaller number). An explicit 0 turns that one cap off.
 export const MCP_LANE_DEFAULT_IP_HOUR = 20;
 export const MCP_LANE_DEFAULT_GLOBAL_DAY = 500;
 export const MCP_META_KEY = 'mcp_lane';
