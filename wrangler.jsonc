@@ -33,6 +33,9 @@
     // 0 = no cap (unlimited). A positive number turns that cap on.
     "MCP_LIMIT_IP_HOUR": "0",
     "MCP_LIMIT_GLOBAL_DAY": "0",
+    // Warn once per UTC minute, per Worker isolate, when open-lane HTTP 429s
+    // go above this count. 0 turns the warning off. It is a log line only.
+    "MCP_ALARM_429_PER_MIN": "20",
     // Same-digest upstream cooldown for /api/stamp and /api/mcp/stamp (milliseconds).
     // Within this window a repeat of the same SHA-256 reuses cached calendar payloads
     // instead of calling OpenTimestamps again. A cached stamp with no TSR still calls

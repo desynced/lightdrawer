@@ -201,9 +201,44 @@ The hosted lane currently has no hourly or daily cap. A short burst limit (5 req
 
 The lane does not store raw IP addresses. When an hourly cap is on, each address is stored as HMAC-SHA256 of the IP and the current UTC day, keyed by the `MCP_IP_SALT` secret if set, or by a value derived from `CT_TICK_SECRET` so production needs no extra secret. Rows live only for the current hour (per address) or current UTC day (the global total) and are deleted by the existing 15-minute cron.
 
-Self-hosters: keep `MCP_LANE` at `off` in the public template (the default) until you want the lane. To turn it on, set `MCP_LANE` to `on` in your private deploy config, apply `migrations/0002_mcp_lane.sql` (or `wrangler d1 migrations apply lightdrawer-ct --remote`), and deploy. To turn it off immediately without redeploying: insert `mcp_lane=off` into `ct_meta`. Optional: `wrangler secret put MCP_IP_SALT` if you want the IP hashes keyed separately from `CT_TICK_SECRET`. Apply `migrations/0003_stamp_dedup.sql` (or the same migrations apply) for the same-digest cooldown table; tune `STAMP_DEDUP_MS` in your deploy config if you want a different window.
+Self-hosters: keep `MCP_LANE` at `off` in the public template (the default) until you want the lane. To turn it on, set `MCP_LANE` to `on` in your private deploy config, apply `migrations/0002_mcp_lane.sql` (or `wrangler d1 migrations apply lightdrawer-ct --remote`), and deploy. To turn it off immediately without redeploying: insert `mcp_lane=off` into `ct_meta`. Optional: `wrangler secret put MCP_IP_SALT` if you want the IP hashes keyed separately from `CT_TICK_SECRET`. Apply `migrations/0003_stamp_dedup.sql` (or the same migrations apply) for the same-digest cooldown table; tune `STAMP_DEDUP_MS` in your deploy config if you want a different window. `MCP_ALARM_429_PER_MIN` (default `20`, `0` off) only changes the log warning described below. It does not change who may stamp.
 
 `/api/stamp` still requires the human check when Turnstile is configured, and trusted servers still use their own API keys. Those checks run before the shared digest cooldown.
+
+### Stamp lane logs
+
+Zone HTTP analytics are a separate Cloudflare product, and some API tokens cannot read them. The Worker log is enough to tell the three stamp entrances apart.
+
+Every finished request to `POST /api/stamp` or `POST /api/mcp/stamp` writes one JSON line, including HTTP 4xx and 429:
+
+```json
+{"msg":"stamp","path":"/api/mcp/stamp","status":429,"via":"mcp","limited":"burst"}
+```
+
+| Field | Meaning |
+|---|---|
+| `path` | `/api/stamp` or `/api/mcp/stamp` |
+| `status` | The HTTP status returned to the caller |
+| `via` | `mcp` for the open lane. `key` only after a valid API key was accepted. `turnstile` only after a browser stamp passed the human check. `null` when `/api/stamp` stopped before either of those (bad or missing key, failed human check, or Turnstile is not configured). |
+| `limited` | `false` when none of the named caps applied. `burst` is the short MCP burst guard. `ip` is the optional hourly per-address MCP cap. `global` is the optional daily MCP cap. `dedup` is the same-digest cooldown with no cached body. The older per-key and per-address limits on `/api/stamp` still return HTTP 429 with `limited` set to `false`. |
+
+That line does not include the API key, the key id, the key label, the digest, or the client IP. A separate older line still records the label and key id when a key is accepted (`stamp key accepted`). The new line does not.
+
+When `/api/mcp/stamp` returns HTTP 429, the Worker counts those responses for the current UTC minute in memory on that isolate. If the count goes above `MCP_ALARM_429_PER_MIN` (default 20), it writes one extra warning:
+
+```json
+{"msg":"mcp-lane-alarm","reason":"429-spike","count":21}
+```
+
+It writes that warning at most once per UTC minute per isolate. Set `MCP_ALARM_429_PER_MIN` to `0` to turn it off. Nothing is emailed or sent to Slack. The count is not stored in D1. Each isolate keeps its own count, so one spike can produce one warning from each isolate that crosses the threshold, and a spike spread across many isolates can stay under the threshold on each of them. `/api/stamp` 429s are not part of this count.
+
+Workers Logs are already turned on in `wrangler.jsonc` (`observability.enabled`, with every request sampled). To read the stored lines:
+
+1. In the Cloudflare dashboard, open **Workers & Pages**, select the Worker, and open **Observability**. The account-level Workers Observability page shows the same logs.
+2. In the search box, search for the text `"msg":"stamp"` or `"msg":"mcp-lane-alarm"`. `"via":"mcp"`, `"via":"key"`, `"via":"turnstile"`, and `"limited":"burst"` (also `ip`, `global`, and `dedup`) separate the entrances and the caps. The alarm is a warning-level log.
+3. For a live view that is not stored, run `npx wrangler tail` from this repo. For the hosted Worker, add `-c wrangler.production.jsonc`. Each stamp request prints that one JSON line.
+
+Invocation logs that Cloudflare adds beside these lines can still show the request URL and other request metadata. The stamp line itself does not add the IP, the digest, or the key.
 
 ## Verify without LightDrawer
 

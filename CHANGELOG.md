@@ -6,6 +6,12 @@ The code history is in the [commit log](https://github.com/desynced/lightdrawer/
 
 Version numbers follow [Semantic Versioning](https://semver.org): new features raise the middle number, and fixes raise the last.
 
+## [1.6.0] - 2026-11-12
+
+### Added
+- Every finished `POST /api/stamp` and `POST /api/mcp/stamp` request writes one JSON log line. The line names the path, the HTTP status, which entrance handled it (`mcp` for the open lane, `key` after a valid API key, `turnstile` after a browser human check passed), and which cap stopped it (`burst`, `ip`, `global`, `dedup`, or `false` when none of those did). A request that stops before a valid key or a passed human check is still logged, with `via` set to null. The line does not include the API key, the key id, the label, the file hash, or the IP address. Errors are included, including HTTP 4xx and 429.
+- A log warning when the open lane returns too many HTTP 429s in the current UTC minute. `MCP_ALARM_429_PER_MIN` sets the count (default 20). `0` turns the warning off. The Worker writes `{ "msg": "mcp-lane-alarm", "reason": "429-spike", "count": n }` at most once per minute on each isolate. It does not send email or Slack. The count stays in memory on that isolate and is not written to D1. The README explains how to read both lines in Cloudflare Workers Logs.
+
 ## [1.5.0] - 2026-11-12
 
 ### Added

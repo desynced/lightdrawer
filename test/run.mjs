@@ -2,7 +2,7 @@
 // `node test/run.mjs --live` also stamps a throwaway test hash at OpenTimestamps calendars
 // and FreeTSA (hash only; no Rekor write) and checks the result with openssl and `ots`.
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { runStampApiTests } from './stamp-api.mjs';
@@ -11,6 +11,7 @@ import { runStampButtonTests } from './stamp-button.mjs';
 import { runSctLogKeysTests } from './sct-log-keys.mjs';
 import { runMcpLaneTests } from './mcp-lane.mjs';
 import { runStampDedupTests } from './stamp-dedup.mjs';
+import { runStampMetricsTests } from './stamp-metrics.mjs';
 import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const core = readFileSync(join(root, 'build/core.js'), 'utf8');
@@ -290,7 +291,10 @@ console.log('CT Worker runtime (allowlist, production ACME guard, CSR, Merkle ma
   const csrPath = join(root, 'build/ct-test.csr');
   writeFileSync(csrPath, csr.pem);
   try {
-    const o = execFileSync('openssl', ['req', '-verify', '-in', csrPath, '-noout', '-text'], { encoding: 'utf8' });
+    // OpenSSL 3 prints "verify OK" on stderr and the certificate text on stdout.
+    const r = spawnSync('openssl', ['req', '-verify', '-in', csrPath, '-noout', '-text'], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error((r.stderr || r.stdout || r.error || 'openssl failed').toString());
+    const o = (r.stdout || '') + (r.stderr || '');
     ok(/verify OK/i.test(o), 'openssl verifies the generated PKCS#10 CSR');
     ok(o.includes(host), 'CSR includes the batch-root hostname');
     ok(/Subject Alternative Name/i.test(o), 'CSR contains a SAN extension');
@@ -312,6 +316,7 @@ await runStampButtonTests(ok);
 await runSctLogKeysTests(ok, L);
 await runMcpLaneTests(ok);
 await runStampDedupTests(ok);
+await runStampMetricsTests(ok);
 
 if (live) {
   console.log('LIVE: stamp a throwaway test file (hash only) at OpenTimestamps calendars + FreeTSA');

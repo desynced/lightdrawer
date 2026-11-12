@@ -129,6 +129,52 @@ export async function consumeMcpLaneQuota(env, ip, now = new Date()) {
   }
 }
 
+export const MCP_ALARM_429_DEFAULT_PER_MIN = 20;
+
+// In-isolate count of open-lane HTTP 429s for the current UTC minute.
+// Not written to D1. Each Worker isolate has its own count, so this is a
+// hint, not an account-wide total. Raw IPs are never stored here.
+let mcp429Alarm = { minute: '', count: 0, warned: false };
+
+export function resetMcp429AlarmForTests() {
+  mcp429Alarm = { minute: '', count: 0, warned: false };
+}
+
+export function mcp429AlarmSnapshot() {
+  return { minute: mcp429Alarm.minute, count: mcp429Alarm.count, warned: mcp429Alarm.warned };
+}
+
+// 0 disables the warning. Missing or invalid values use the default (20).
+export function mcpAlarm429PerMin(env) {
+  return parseLimitInt(env && env.MCP_ALARM_429_PER_MIN, MCP_ALARM_429_DEFAULT_PER_MIN);
+}
+
+export function utcMinuteString(now = new Date()) {
+  return now.toISOString().slice(0, 16);
+}
+
+// Count one MCP-lane 429. When the count goes above the threshold, emit one
+// warning for this UTC minute and do not emit it again until the minute changes.
+export function recordMcp429(env, now = new Date()) {
+  const threshold = mcpAlarm429PerMin(env);
+  if (threshold === 0) return { count: 0, warned: false, disabled: true };
+  const minute = utcMinuteString(now);
+  if (mcp429Alarm.minute !== minute) {
+    mcp429Alarm = { minute, count: 0, warned: false };
+  }
+  mcp429Alarm.count += 1;
+  if (mcp429Alarm.count > threshold && !mcp429Alarm.warned) {
+    mcp429Alarm.warned = true;
+    console.warn(JSON.stringify({
+      msg: 'mcp-lane-alarm',
+      reason: '429-spike',
+      count: mcp429Alarm.count,
+    }));
+    return { count: mcp429Alarm.count, warned: true, disabled: false };
+  }
+  return { count: mcp429Alarm.count, warned: false, disabled: false };
+}
+
 export async function pruneMcpLaneUsage(env, now = new Date()) {
   if (!env || !env.CT_DB) return { pruned: false };
   const hour = utcHourString(now);
