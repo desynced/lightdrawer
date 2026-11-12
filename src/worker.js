@@ -1,5 +1,6 @@
 import { runCtTick } from './ct-runtime.js';
 import { mcpLaneGate, consumeMcpLaneQuota, pruneMcpLaneUsage } from './mcp-lane.js';
+import { lookupStampDedup, pruneStampDedup, STAMP_DEDUP_ERROR, storeStampDedup } from './stamp-dedup.js';
 import { parseBearer, resolveStampCaller, sanitizeLabel, stampAuthLimitKey, stampLimitKey, timingSafeEqualHex } from './stamp-keys.js';
 import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptPath, redirectToReceipt, wantsJson } from './receipt-lookup.js';
 // LightDrawer Worker: serves the static site (Workers Static Assets) and two small
@@ -8,7 +9,9 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 // only SHA-256 fingerprints are stored for the certificate-log stamp queue.
 //   POST /api/stamp          { digest, tsq, turnstile } -> { ots: {calendar: b64}, tsr: b64, errors }
 //                            Authorization: Bearer <key> skips Turnstile for trusted callers (hash stored in D1)
+//                            Same-digest cooldown (STAMP_DEDUP_MS) may reuse a cached successful result
 //   POST /api/mcp/stamp      { digest, tsq } -> same JSON; no Turnstile, no API key; rate-limited open lane
+//                            Shares performStamp() and the same-digest cooldown with /api/stamp
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
@@ -116,10 +119,25 @@ async function handleStamp(req, env, url) {
     // A TimeStampReq for SHA-256 is ~60-90 bytes; refuse anything else and anything not for this digest.
     if (tsq.length > 256 || tsq[0] !== 0x30 || !containsDigest(tsq, digest)) return json({ error: 'tsq must be an RFC 3161 request for this digest' }, 400);
   }
-  return json(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+  return stampResponse(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+}
+
+function stampResponse(result) {
+  return json(result.body, result.status || 200, result.headers || {});
 }
 
 async function performStamp(env, { digestHex, digestBytes, tsq }) {
+  const digest = String(digestHex || '').toLowerCase();
+  const dedup = await lookupStampDedup(env, digest);
+  if (dedup.hit) {
+    if (dedup.body) return { status: 200, body: dedup.body };
+    return {
+      status: 429,
+      body: { error: STAMP_DEDUP_ERROR },
+      headers: { 'retry-after': String(dedup.retryAfter) },
+    };
+  }
+
   const errors = [], ots = {};
   const otsJobs = CALENDARS.map(async (cal) => {
     try {
@@ -148,13 +166,14 @@ async function performStamp(env, { digestHex, digestBytes, tsq }) {
   // Optional CT queue: store only the 32-byte hash, and only if a D1 binding is present.
   if (env.CT_DB) {
     try {
-      await env.CT_DB.prepare('INSERT OR IGNORE INTO ct_pending (digest, received_at) VALUES (?, ?)').bind(digestHex.toLowerCase(), new Date().toISOString()).run();
+      await env.CT_DB.prepare('INSERT OR IGNORE INTO ct_pending (digest, received_at) VALUES (?, ?)').bind(digest, new Date().toISOString()).run();
     } catch (e) {
       console.error(JSON.stringify({ msg: 'ct queue error', error: String(e && e.message ? e.message : e) }));
       errors.push('CT queue: unavailable');
     }
   }
-  return { ots, tsr, errors };
+  await storeStampDedup(env, digest, { ots, tsr });
+  return { status: 200, body: { ots, tsr, errors } };
 }
 
 async function handleMcpStamp(req, env) {
@@ -183,7 +202,7 @@ async function handleMcpStamp(req, env) {
   if (quota.limited) {
     return json({ error: 'Too many requests. Try again later.' }, 429, { 'retry-after': String(quota.retryAfter) });
   }
-  return json(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
+  return stampResponse(await performStamp(env, { digestHex: body.digest, digestBytes: digest, tsq }));
 }
 
 async function handleUpgrade(req, env, url, ctx) {
@@ -344,6 +363,7 @@ export default {
   },
   async scheduled(event, env, ctx) {
     await pruneMcpLaneUsage(env);
+    await pruneStampDedup(env);
     await runCtTick(env, { force: false, includeOpen: false });
   },
 };
