@@ -18,6 +18,7 @@ import { htmlResponse, jsonResponse, lookupStamp, normalizeDigest, parseReceiptP
 //   The line never includes a key id, label, digest, or IP. MCP 429s can also
 //   emit one mcp-lane-alarm warning per UTC minute per isolate.
 //   GET  /api/ots/upgrade?cal=<calendar>&commitment=<hex>  -> raw calendar timestamp bytes | 404 pending
+//                            Allowlisted hosts only. Redirects are not followed.
 //   GET  /api/ct/upgrade?digest=<hex>  -> anchored proofs/ct.json | 404 pending
 //   GET  /r/<digest>         -> public fingerprint record (HTML; JSON if Accept: application/json)
 //   GET  /?digest=<hex>      -> 302 redirect to /r/<digest>
@@ -287,7 +288,15 @@ async function handleUpgrade(req, env, url, ctx) {
   const cache = caches.default;
   const hit = await cache.match(cacheKey); if (hit) return hit;
   let r;
-  try { r = await fetch(`https://${host}/timestamp/${commitment}`, { headers: { accept: 'application/vnd.opentimestamps.v1' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }); }
+  try {
+    // Workers fetch follows redirects by default, including to a different host.
+    // Stay on this allowlisted host. A 3xx is an error below, not another fetch.
+    r = await fetch(`https://${host}/timestamp/${commitment}`, {
+      headers: { accept: 'application/vnd.opentimestamps.v1' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  }
   catch (e) { return json({ error: 'calendar unreachable' }, 502, cors); }
   if (r.status === 404) return json({ pending: true }, 404, { ...cors, 'cache-control': 'public, max-age=300' });
   if (!r.ok) return json({ error: 'calendar HTTP ' + r.status }, 502, cors);
