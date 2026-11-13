@@ -8,6 +8,12 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## Unreleased
 
+### Changed
+- How we keep LightDrawer trustworthy now says the main ruleset requires the automated tests to pass, and that v1.6.2 is the first release with signed build provenance. Formatting in its settings list is restored.
+- package.json now reads 1.6.2. The v1.6.2 tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
+
+## [1.6.2] - 2026-11-13
+
 ### Added
 - A security policy (`SECURITY.md`), dated 2026-11-12 (US Central). Reports can go to security@lightdrawer.org or to a private GitHub advisory. There is no bounty. ([#6](https://github.com/desynced/lightdrawer/pull/6))
 - The README Support section links to updates at [@lightdrawer_org](https://x.com/lightdrawer_org). ([#6](https://github.com/desynced/lightdrawer/pull/6))
@@ -130,6 +136,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - One readable receipt plus `verify.html`, a verifier that works offline.
 - Free, with no account.
 
+[1.6.2]: https://github.com/desynced/lightdrawer/compare/v1.4.0...v1.6.2
 [1.4.0]: https://github.com/desynced/lightdrawer/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/desynced/lightdrawer/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/desynced/lightdrawer/compare/v1.2.2...v1.3.0
@@ -139,4 +146,4 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 [1.1.0]: https://github.com/desynced/lightdrawer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/desynced/lightdrawer/releases/tag/v1.0.0
 
-Versions 1.5.0, 1.5.1, 1.6.0, and 1.6.1 are listed above. Git tags exist only through v1.4.0, so only those versions have compare links.
+Versions 1.5.0, 1.5.1, 1.6.0, and 1.6.1 were never tagged. Their changes are included in v1.6.2, so the 1.6.2 link compares against v1.4.0.

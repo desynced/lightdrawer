@@ -36,11 +36,11 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace vX.Y.Z with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
 
-You can check verify.html the same way.
+You can check `verify.html` the same way.
 
-Tags `v1.0.0` through `v1.4.0` were pushed before this workflow existed, so they do not have that statement. Versions 1.5.0 through 1.6.1 are in the changelog and in `package.json` and are not tagged yet.
+v1.6.2 is the first release with signed build provenance. Tags v1.0.0 through v1.4.0 were pushed before the release workflow existed, so they do not have it. Versions 1.5.0 through 1.6.1 were never tagged; their changes are included in v1.6.2.
 
 The offline checker is built into `public/verify.html` from `web/ui/verify.html`. It can check a receipt from a local file. It does not need this website unless you opt in to an online upgrade.
 
@@ -48,20 +48,14 @@ The offline checker is built into `public/verify.html` from `web/ui/verify.html`
 
 These settings live in GitHub, not in this repository's files. As of November 13, 2026 they are set like this:
 
-Dependabot alerts and Dependabot security updates are on. GitHub warns about known vulnerable dependencies and opens pull requests to fix them. Malware alerts for dependencies are on too.
+- Dependabot alerts and Dependabot security updates are on. GitHub warns about known vulnerable dependencies and opens pull requests to fix them. Malware alerts for dependencies are on too.
+- Secret scanning with push protection is on. GitHub scans the repository for leaked credentials and blocks pushes that contain a recognized secret.
+- Private vulnerability reporting is on. Anyone can report a security problem privately through a GitHub security advisory.
+- main is protected by a ruleset. The ruleset is active and nobody can bypass it. Every change to main has to go through a pull request, and the automated tests (the "Test" check) must pass before it can be merged. Force-pushes to main are blocked, and main cannot be deleted.
 
-Secret scanning with push protection is on. GitHub scans the repository for leaked credentials and blocks pushes that contain a recognized secret.
+Not on:
 
-Private vulnerability reporting is on. Anyone can report a security problem privately through a GitHub security advisory.
-
-main is protected by a ruleset. The ruleset is active and nobody can bypass it. Every change to main has to go through a pull request. Force-pushes to main are blocked, and main cannot be deleted.
-
-Not on yet:
-
-Passing CI is not yet required to merge. CI runs on every pull request, but the ruleset does not yet require it to pass. We plan to add that requirement.
-
-Approving reviews are not required. A pull request needs zero approvals before it can be merged. This is a one-person project.
-
-CodeQL code scanning is off. Scorecard results are uploaded to code scanning, but CodeQL analysis is not enabled.
+- Approving reviews are not required. A pull request needs zero approvals before it can be merged. This is a one-person project.
+- CodeQL code scanning is off. Scorecard results are uploaded to code scanning, but CodeQL analysis is not enabled.
 
 If a setting here changes, this page should change with it.
