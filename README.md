@@ -1,6 +1,7 @@
 # LightDrawer
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/desynced/lightdrawer/badge)](https://scorecard.dev/viewer/?uri=github.com/desynced/lightdrawer)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16664/badge)](https://www.bestpractices.dev/projects/16664)
 
 ![LightDrawer](examples/brand/logo-lockup.png)
 
