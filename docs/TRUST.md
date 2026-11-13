@@ -52,10 +52,10 @@ These settings live in GitHub, not in this repository's files. As of November 13
 - **Secret scanning with push protection is on.** GitHub scans the repository for leaked credentials and blocks pushes that contain a recognized secret.
 - **Private vulnerability reporting is on.** Anyone can report a security problem privately through a [GitHub security advisory](https://github.com/desynced/lightdrawer/security/advisories/new).
 - **`main` is protected by a ruleset.** The ruleset is active and nobody can bypass it. Every change to `main` has to go through a pull request, and the automated tests (the "Test" check) must pass before it can be merged. Force-pushes to `main` are blocked, and `main` cannot be deleted.
+- **CodeQL code scanning is on.** GitHub's default setup runs CodeQL analysis on every push and pull request to `main`, and on a weekly schedule. Scorecard results are still uploaded to code scanning.
 
 Not on:
 
 - **Approving reviews are not required.** A pull request needs zero approvals before it can be merged. This is a one-person project.
-- **CodeQL code scanning is off.** Scorecard results are uploaded to code scanning, but CodeQL analysis is not enabled.
 
 If a setting here changes, this page should change with it.
