@@ -12,6 +12,9 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - [How we keep LightDrawer trustworthy](docs/TRUST.md) now says the `main` ruleset requires the automated tests to pass, and that `v1.6.2` is the first release with signed build provenance. Formatting in its settings list is restored.
 - `package.json` now reads 1.6.2. The `v1.6.2` tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
 
+### Security
+- [How we keep LightDrawer trustworthy](docs/TRUST.md) now says CodeQL code scanning is on. GitHub's default setup runs it on pushes and pull requests to `main`, and on a weekly schedule. Required approving reviews are still not required.
+
 ## [1.6.2] - 2026-11-13
 
 ### Added
