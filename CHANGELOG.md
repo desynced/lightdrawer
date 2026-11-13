@@ -14,6 +14,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ### Security
 - [How we keep LightDrawer trustworthy](docs/TRUST.md) now says CodeQL code scanning is on. GitHub's default setup runs it on pushes and pull requests to `main`, and on a weekly schedule. Required approving reviews are still not required.
+- `POST /api/ct/tick` no longer returns exception text. An unexpected failure is logged on the server, the JSON body says the tick failed, and D1 `last_error` can still keep the detail for the operator. The mock certificate directory name uses a random UUID instead of `Math.random()`, and the stamp-key script escapes backslashes before quotes in the printed wrangler command.
 
 ## [1.6.2] - 2026-11-13
 

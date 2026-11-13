@@ -6,6 +6,7 @@ import {
   recordMcp429,
   resetMcp429AlarmForTests,
 } from '../src/mcp-lane.js';
+import { isStampUpstreamUrl, isTurnstileUrl } from './upstream-url.mjs';
 import worker from '../src/worker.js';
 
 const DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -135,8 +136,7 @@ export async function runStampMetricsTests(ok) {
   const rec = await generateStampKeyRecord(LABEL);
   const savedFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
-    const u = String(url);
-    if (u.includes('challenges.cloudflare.com/turnstile')) {
+    if (isTurnstileUrl(url)) {
       let token = '';
       try {
         if (init && init.body && typeof init.body.get === 'function') token = init.body.get('response') || '';
@@ -144,10 +144,10 @@ export async function runStampMetricsTests(ok) {
       const okToken = token === 'human-ok';
       return Response.json({ success: okToken });
     }
-    if (u.includes('/digest') || u.includes('freetsa.org')) {
+    if (isStampUpstreamUrl(url)) {
       return new Response(new Uint8Array([9, 9, 9]), { status: 200, headers: { 'content-type': 'application/octet-stream' } });
     }
-    throw new Error('unexpected fetch: ' + u);
+    throw new Error('unexpected fetch: ' + url);
   };
 
   const baseEnv = {

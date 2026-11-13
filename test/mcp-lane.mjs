@@ -11,6 +11,7 @@ import {
   utcDayString,
   utcHourString,
 } from '../src/mcp-lane.js';
+import { isStampUpstreamUrl, isTurnstileUrl } from './upstream-url.mjs';
 import worker from '../src/worker.js';
 
 const DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -171,16 +172,15 @@ export async function runMcpLaneTests(ok) {
   let turnstileCalls = 0;
   let calendarCalls = 0;
   globalThis.fetch = async (url) => {
-    const u = String(url);
-    if (u.includes('challenges.cloudflare.com/turnstile')) {
+    if (isTurnstileUrl(url)) {
       turnstileCalls++;
       return Response.json({ success: false });
     }
-    if (u.includes('/digest') || u.includes('freetsa.org')) {
+    if (isStampUpstreamUrl(url)) {
       calendarCalls++;
       return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { 'content-type': 'application/octet-stream' } });
     }
-    throw new Error('unexpected fetch: ' + u);
+    throw new Error('unexpected fetch: ' + url);
   };
 
   const digestAt = (n) => n.toString(16).padStart(64, '0');

@@ -4,6 +4,13 @@
 // a real key, hash insert of a production key, or command output that includes
 // the plaintext.
 import { generateStampKeyRecord, hashStampKey, insertStampKeySql, revokeStampKeySql } from '../src/stamp-keys.js';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Backslash first, then quotes, so a backslash cannot escape the closing quote.
+export function shellDoubleQuote(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
 
 const usage = `Usage:
   node scripts/stamp-key.mjs mint <label>
@@ -31,44 +38,49 @@ List keys (labels only; hashes are not needed day to day):
   wrangler d1 execute lightdrawer-ct --remote --command "SELECT id, label, created_at, revoked_at FROM stamp_keys ORDER BY created_at"
 `;
 
-const [, , cmd, arg] = process.argv;
-if (!cmd || cmd === '-h' || cmd === '--help') {
-  process.stdout.write(usage);
-  process.exit(cmd ? 0 : 2);
+async function main() {
+  const [, , cmd, arg] = process.argv;
+  if (!cmd || cmd === '-h' || cmd === '--help') {
+    process.stdout.write(usage);
+    process.exit(cmd ? 0 : 2);
+  }
+
+  try {
+    if (cmd === 'mint') {
+      if (!arg) throw new Error('mint requires a label, e.g. node scripts/stamp-key.mjs mint fairview');
+      const rec = await generateStampKeyRecord(arg);
+      const sql = insertStampKeySql(rec);
+      process.stdout.write(
+        `Plaintext key (shown once — store it as a secret on the caller, e.g. Fairview LIGHTDRAWER_STAMP_KEY).\n` +
+        `Do not commit this value.\n\n` +
+        `  ${rec.token}\n\n` +
+        `id:         ${rec.id}\n` +
+        `label:      ${rec.label}\n` +
+        `key_hash:   ${rec.key_hash}\n` +
+        `created_at: ${rec.created_at}\n\n` +
+        `Insert (hash only; safe to paste into wrangler d1 execute):\n\n` +
+        `  wrangler d1 execute lightdrawer-ct --remote --command "${shellDoubleQuote(sql)}"\n`
+      );
+    } else if (cmd === 'hash') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      const token = Buffer.concat(chunks).toString('utf8').trim();
+      if (!token) throw new Error('provide the plaintext key on stdin');
+      process.stdout.write(await hashStampKey(token) + '\n');
+    } else if (cmd === 'revoke-sql') {
+      if (!arg) throw new Error('revoke-sql requires the key id (UUID)');
+      const sql = revokeStampKeySql(arg);
+      process.stdout.write(
+        `  wrangler d1 execute lightdrawer-ct --remote --command "${shellDoubleQuote(sql)}"\n`
+      );
+    } else {
+      throw new Error('unknown command: ' + cmd);
+    }
+  } catch (e) {
+    process.stderr.write(String(e.message || e) + '\n');
+    process.exit(1);
+  }
 }
 
-try {
-  if (cmd === 'mint') {
-    if (!arg) throw new Error('mint requires a label, e.g. node scripts/stamp-key.mjs mint fairview');
-    const rec = await generateStampKeyRecord(arg);
-    const sql = insertStampKeySql(rec);
-    process.stdout.write(
-      `Plaintext key (shown once — store it as a secret on the caller, e.g. Fairview LIGHTDRAWER_STAMP_KEY).\n` +
-      `Do not commit this value.\n\n` +
-      `  ${rec.token}\n\n` +
-      `id:         ${rec.id}\n` +
-      `label:      ${rec.label}\n` +
-      `key_hash:   ${rec.key_hash}\n` +
-      `created_at: ${rec.created_at}\n\n` +
-      `Insert (hash only; safe to paste into wrangler d1 execute):\n\n` +
-      `  wrangler d1 execute lightdrawer-ct --remote --command "${sql.replace(/"/g, '\\"')}"\n`
-    );
-  } else if (cmd === 'hash') {
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    const token = Buffer.concat(chunks).toString('utf8').trim();
-    if (!token) throw new Error('provide the plaintext key on stdin');
-    process.stdout.write(await hashStampKey(token) + '\n');
-  } else if (cmd === 'revoke-sql') {
-    if (!arg) throw new Error('revoke-sql requires the key id (UUID)');
-    const sql = revokeStampKeySql(arg);
-    process.stdout.write(
-      `  wrangler d1 execute lightdrawer-ct --remote --command "${sql.replace(/"/g, '\\"')}"\n`
-    );
-  } else {
-    throw new Error('unknown command: ' + cmd);
-  }
-} catch (e) {
-  process.stderr.write(String(e.message || e) + '\n');
-  process.exit(1);
-}
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+if (isMain) main().catch((e) => { process.stderr.write(String(e.message || e) + '\n'); process.exit(1); });

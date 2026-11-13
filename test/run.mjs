@@ -170,7 +170,10 @@ console.log('Certificate Transparency helpers (Merkle, names, ct.json, verifier)
   const plan = L.ctPlanAnchor(st, tAnchor);
   ok(plan && plan.hostnames.length === 1 && plan.hostnames[0] === closed[0].hostname, 'plans one SAN for the closed sub-batch');
 
-  const { mockIssueCertificate, acmeIssue, createMockAcmeDns, runCli } = await import(new URL('../scripts/ct-anchor.mjs', import.meta.url));
+  const { mockIssueCertificate, mockCertTempSuffix, acmeIssue, createMockAcmeDns, runCli } = await import(new URL('../scripts/ct-anchor.mjs', import.meta.url));
+  const suffix = mockCertTempSuffix();
+  ok(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(suffix) && suffix.length >= 16, 'mock cert temp directory suffix is a UUID');
+  ok(suffix !== mockCertTempSuffix() && !/Math\.random/.test(mockIssueCertificate.toString() + mockCertTempSuffix.toString()), 'mock cert temp directory does not use Math.random');
   const issued = await mockIssueCertificate(plan.hostnames);
   issued.issuedAt = '2026-11-09T00:22:00.000Z';
   L.ctRecordIssuance(st, plan, issued);
