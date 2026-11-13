@@ -59,9 +59,13 @@ export function saveState(path, state) {
   writeFileSync(path, JSON.stringify(state, null, 2) + '\n');
 }
 
+export function mockCertTempSuffix() {
+  return crypto.randomUUID();
+}
+
 export async function mockIssueCertificate(hostnames) {
   if (!hostnames.length) throw new Error('no hostnames to certify');
-  const dir = join(tmpdir(), 'lightdrawer-ct-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+  const dir = join(tmpdir(), 'lightdrawer-ct-' + Date.now() + '-' + mockCertTempSuffix());
   mkdirSync(dir, { recursive: true });
   const key = join(dir, 'key.pem'), cert = join(dir, 'cert.pem');
   const san = hostnames.map((h) => 'DNS:' + h).join(',');

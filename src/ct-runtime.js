@@ -497,7 +497,11 @@ export async function acmePhase2(env, db, state) {
   };
   const cert = await recordIssuance(db, { hostnames: state.hostnames, batch_ids: state.batch_ids }, issued);
   for (const az of state.authorizations || []) {
-    try { await cloudflareClearTxt(env, az.txtName); } catch (e) { issued.clearError = String(e.message || e); }
+    try { await cloudflareClearTxt(env, az.txtName); }
+    catch (e) {
+      logCtTickError(e);
+      issued.clearError = 'TXT cleanup failed';
+    }
   }
   await metaDel(db, 'issuance');
   return { issued: true, cert_id: cert.id, hostnames: state.hostnames, method: issued.method, clearError: issued.clearError || null };
@@ -505,6 +509,14 @@ export async function acmePhase2(env, db, state) {
 
 export async function clearIssuanceError(db, issuance) {
   if (issuance && issuance.issued === true) await metaDel(db, 'last_error');
+}
+
+// Exception text stays in the server log (and in D1 last_error). Callers see a fixed string.
+function ctTickErrorText(e) {
+  return String(e && e.message ? e.message : e);
+}
+function logCtTickError(e) {
+  console.error(JSON.stringify({ msg: 'ct tick error', error: ctTickErrorText(e) }));
 }
 
 export async function runCtTick(env, opts = {}) {
@@ -519,8 +531,9 @@ export async function runCtTick(env, opts = {}) {
   let cfg;
   try { cfg = ctConfigFromEnv(env); }
   catch (e) {
+    logCtTickError(e);
     summary.ok = false;
-    summary.error = e.message;
+    summary.error = 'CT tick failed';
     return summary;
   }
   try {
@@ -561,9 +574,11 @@ export async function runCtTick(env, opts = {}) {
     summary.issuance = { started: true, ...(await acmePhase1(env, db, plan)) };
     return summary;
   } catch (e) {
+    const detail = ctTickErrorText(e);
+    logCtTickError(e);
     summary.ok = false;
-    summary.error = e.message || String(e);
-    try { await metaSet(db, 'last_error', JSON.stringify({ at: new Date().toISOString(), error: summary.error })); } catch { /* ignore */ }
+    summary.error = 'CT tick failed';
+    try { await metaSet(db, 'last_error', JSON.stringify({ at: new Date().toISOString(), error: detail })); } catch { /* ignore */ }
     try { await metaSet(db, 'last_attempt_at', new Date().toISOString()); } catch { /* ignore */ }
     return summary;
   }

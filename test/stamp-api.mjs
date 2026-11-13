@@ -9,6 +9,9 @@ import {
   stampLimitKey,
   timingSafeEqualHex,
 } from '../src/stamp-keys.js';
+import { shellDoubleQuote } from '../scripts/stamp-key.mjs';
+import { STAGING_DIRECTORY } from '../src/ct-runtime.js';
+import { isCalendarDigestUrl, isFreetsaUrl, isStampUpstreamUrl, isTurnstileUrl } from './upstream-url.mjs';
 import worker from '../src/worker.js';
 
 const DIGEST = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -61,6 +64,33 @@ export async function runStampApiTests(ok) {
   threw = false; try { revokeStampKeySql(rec.id, "2026-11-09T00:00:00.000Z','x"); } catch { threw = true; }
   ok(threw, 'revoke SQL rejects a revoked_at that could break quoting');
 
+  // Read a double-quoted shell string. A backslash that escapes the closing quote is a breakout.
+  const readDoubleQuoted = (wrapped) => {
+    if (!wrapped.startsWith('"')) return null;
+    let out = '';
+    let i = 1;
+    while (i < wrapped.length) {
+      const c = wrapped[i];
+      if (c === '"') return i === wrapped.length - 1 ? out : null;
+      if (c === '\\') {
+        if (i + 1 >= wrapped.length) return null;
+        const n = wrapped[i + 1];
+        if (n === '"' && i + 1 === wrapped.length - 1) return null;
+        out += n;
+        i += 2;
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    return null;
+  };
+  const quoted = (value) => '"' + shellDoubleQuote(value) + '"';
+  const mixed = 'say "hi" \\ and \\\\ "end\\';
+  ok(shellDoubleQuote('a"b\\c') === 'a\\"b\\\\c', 'quotes and backslashes are both escaped, backslash first');
+  ok(readDoubleQuoted(quoted(mixed)) === mixed, 'a value with quotes and backslashes stays inside the double quotes');
+  ok(readDoubleQuoted(quoted('\\"')) === '\\"', 'a backslash before a quote cannot close the shell string early');
+
   ok(parseBearer(null).kind === 'none' && parseBearer('').kind === 'none', 'missing Authorization is anonymous');
   ok(parseBearer('Basic abc').kind === 'none', 'non-Bearer Authorization is anonymous (browser path unchanged)');
   ok(parseBearer('Bearer ').kind === 'invalid' && parseBearer('Bearer    ').kind === 'invalid', 'empty Bearer is invalid');
@@ -88,17 +118,22 @@ export async function runStampApiTests(ok) {
   let turnstileCalls = 0;
   let calendarCalls = 0;
   const limitKeys = [];
+  ok(isFreetsaUrl('https://freetsa.org/tsr') && isFreetsaUrl('https://a.freetsa.org/tsr'), 'FreeTSA mock matches freetsa.org and a subdomain');
+  ok(!isFreetsaUrl('https://evil.example/freetsa.org') && !isFreetsaUrl('https://notfreetsa.org/tsr'), 'a URL that only mentions freetsa.org is not FreeTSA');
+  ok(isCalendarDigestUrl('https://a.pool.opentimestamps.org/digest') && isCalendarDigestUrl('https://a.pool.eternitywall.com/digest'), 'calendar mock matches a /digest path');
+  ok(!isCalendarDigestUrl('https://evil.example/?next=/digest') && !isStampUpstreamUrl('https://evil.example/freetsa.org'), 'a query or path that merely contains those strings is not an upstream');
+  ok(isTurnstileUrl('https://challenges.cloudflare.com/turnstile/v0/siteverify') && !isTurnstileUrl('https://evil.example/challenges.cloudflare.com/turnstile'), 'Turnstile mock matches the challenges host and path');
+
   globalThis.fetch = async (url) => {
-    const u = String(url);
-    if (u.includes('challenges.cloudflare.com/turnstile')) {
+    if (isTurnstileUrl(url)) {
       turnstileCalls++;
       return Response.json({ success: false });
     }
-    if (u.includes('/digest') || u.includes('freetsa.org')) {
+    if (isStampUpstreamUrl(url)) {
       calendarCalls++;
       return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { 'content-type': 'application/octet-stream' } });
     }
-    throw new Error('unexpected fetch: ' + u);
+    throw new Error('unexpected fetch: ' + url);
   };
 
   const env = {
@@ -233,10 +268,9 @@ export async function runStampApiTests(ok) {
 
     const boomFetch = globalThis.fetch;
     globalThis.fetch = async (url) => {
-      const u = String(url);
-      if (u.includes('challenges.cloudflare.com/turnstile')) return Response.json({ success: false });
-      if (u.includes('/digest') || u.includes('freetsa.org')) throw new Error('secret internals boom SQL table ct_pending');
-      throw new Error('unexpected fetch: ' + u);
+      if (isTurnstileUrl(url)) return Response.json({ success: false });
+      if (isStampUpstreamUrl(url)) throw new Error('secret internals boom SQL table ct_pending');
+      throw new Error('unexpected fetch: ' + url);
     };
     const boom = await stamp({ authorization: 'Bearer ' + rec.token });
     const boomBody = await boom.json();
@@ -282,6 +316,153 @@ export async function runStampApiTests(ok) {
       body: '{}',
     }), { ...tickEnv, STAMP_AUTH_LIMITER: mockLimiter([], 'ct-tick:') }, { waitUntil() {} });
     ok(tickLimited.status === 429, 'tick is rate-limited independently of stamp buckets');
+
+    const unbound = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+      method: 'POST',
+      headers: { authorization: 'Bearer tick-secret-value', 'content-type': 'application/json' },
+      body: '{}',
+    }), tickEnv, { waitUntil() {} });
+    const unboundBody = await unbound.json();
+    ok(unbound.status === 200 && unboundBody.error === 'CT_DB is not bound', 'a missing CT_DB still reports that static error');
+
+    const boomMsg = 'secret internals boom';
+    const tickMeta = {};
+    const boomDb = {
+      prepare(sql) {
+        if (/FROM ct_pending/.test(sql)) throw new Error(boomMsg);
+        const exec = (...params) => ({
+          async first() { return null; },
+          async all() { return { results: [] }; },
+          async run() {
+            if (/INSERT INTO ct_meta/.test(sql)) tickMeta[params[0]] = params[1];
+            return { success: true };
+          },
+        });
+        return Object.assign(exec(), { bind(...params) { return exec(...params); } });
+      },
+    };
+    const savedError = console.error;
+    const tickLogs = [];
+    console.error = (...args) => { tickLogs.push(args.map((a) => String(a)).join(' ')); };
+    let boomRaw = '';
+    try {
+      const boomTick = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tick-secret-value', 'content-type': 'application/json' },
+        body: '{}',
+      }), { ...tickEnv, CT_DB: boomDb }, { waitUntil() {} });
+      boomRaw = await boomTick.text();
+      ok(boomTick.status === 200 && boomRaw.includes('CT tick failed'), 'tick exception returns a generic failure');
+    } finally {
+      console.error = savedError;
+    }
+    ok(!boomRaw.includes(boomMsg), 'tick response does not include the exception text');
+    ok(tickLogs.some((line) => line.includes('"msg":"ct tick error"') && line.includes(boomMsg)), 'tick exception is logged on the server');
+    ok(tickMeta.last_error && tickMeta.last_error.includes(boomMsg) && !boomRaw.includes(boomMsg), 'D1 last_error keeps the detail and the response does not');
+
+    const savedConfigError = console.error;
+    const configLogs = [];
+    console.error = (...args) => { configLogs.push(args.map((a) => String(a)).join(' ')); };
+    let configRaw = '';
+    try {
+      const configTick = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tick-secret-value', 'content-type': 'application/json' },
+        body: '{}',
+      }), { ...tickEnv, CT_DB: boomDb, CT_SUB_BATCH_MS: '1' }, { waitUntil() {} });
+      configRaw = await configTick.text();
+    } finally {
+      console.error = savedConfigError;
+    }
+    ok(configRaw.includes('CT tick failed') && !configRaw.includes('CT_SUB_BATCH_MS'), 'a config exception is not copied into the tick body');
+    ok(configLogs.some((line) => line.includes('CT_SUB_BATCH_MS')), 'the config exception is logged on the server');
+
+    const dnsBoom = 'secret dns cleanup boom';
+    const host = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ct.lightdrawer.org';
+    const clearMeta = {
+      issuance: JSON.stringify({
+        directoryUrl: STAGING_DIRECTORY,
+        orderUrl: 'https://acme.test/order/1',
+        finalizeUrl: 'https://acme.test/finalize/1',
+        hostnames: [host],
+        batch_ids: ['2026-11-09T00:00:00.000Z'],
+        authorizations: [{
+          url: 'https://acme.test/authz/1',
+          hostname: host,
+          txtName: '_acme-challenge.' + host,
+          txtValue: 'abc',
+          challengeUrl: 'https://acme.test/chall/1',
+          challengePosted: true,
+        }],
+      }),
+    };
+    const clearDb = {
+      prepare(sql) {
+        const exec = (...params) => ({
+          async first() {
+            if (/FROM ct_meta/.test(sql)) {
+              const value = clearMeta[params[0]];
+              return value == null ? null : { value };
+            }
+            return null;
+          },
+          async all() { return { results: [] }; },
+          async run() {
+            if (/INSERT INTO ct_meta/.test(sql)) clearMeta[params[0]] = params[1];
+            if (/DELETE FROM ct_meta/.test(sql)) delete clearMeta[params[0]];
+            return { success: true };
+          },
+        });
+        return Object.assign(exec(), { bind(...params) { return exec(...params); } });
+      },
+    };
+    const savedClearError = console.error;
+    const clearLogs = [];
+    console.error = (...args) => { clearLogs.push(args.map((a) => String(a)).join(' ')); };
+    globalThis.fetch = async (url) => {
+      const u = new URL(String(url));
+      const nonce = { 'replay-nonce': 'nonce-1' };
+      if (u.hostname === 'acme-staging-v02.api.letsencrypt.org') {
+        return Response.json({
+          newNonce: 'https://acme.test/nonce',
+          newAccount: 'https://acme.test/new-acct',
+          newOrder: 'https://acme.test/new-order',
+        });
+      }
+      if (u.hostname === 'acme.test' && u.pathname === '/nonce') return new Response(null, { status: 200, headers: nonce });
+      if (u.hostname === 'acme.test' && u.pathname === '/new-acct') {
+        return new Response('{}', { status: 201, headers: { ...nonce, location: 'https://acme.test/acct/1', 'content-type': 'application/json' } });
+      }
+      if (u.hostname === 'acme.test' && u.pathname === '/authz/1') return Response.json({ status: 'valid' }, { headers: nonce });
+      if (u.hostname === 'acme.test' && u.pathname === '/finalize/1') {
+        return Response.json({ status: 'valid', certificate: 'https://acme.test/cert/1' }, { headers: nonce });
+      }
+      if (u.hostname === 'acme.test' && u.pathname === '/cert/1') {
+        return new Response('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n', { status: 200, headers: nonce });
+      }
+      if (u.hostname === 'api.cloudflare.com') throw new Error(dnsBoom);
+      throw new Error('unexpected fetch: ' + u);
+    };
+    let clearRaw = '';
+    try {
+      const clearTick = await worker.fetch(new Request('https://lightdrawer.example/api/ct/tick', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tick-secret-value', 'content-type': 'application/json' },
+        body: '{}',
+      }), {
+        ...tickEnv,
+        CT_DB: clearDb,
+        CF_DNS_TOKEN: 'test-dns-token',
+        CF_ZONE_ID: 'test-zone',
+      }, { waitUntil() {} });
+      clearRaw = await clearTick.text();
+    } finally {
+      console.error = savedClearError;
+    }
+    const clearBody = JSON.parse(clearRaw);
+    ok(clearBody.ok === true && clearBody.issuance && clearBody.issuance.clearError === 'TXT cleanup failed', 'TXT cleanup failure is a fixed string on the issuance result');
+    ok(!clearRaw.includes(dnsBoom), 'TXT cleanup exception text is not in the tick body');
+    ok(clearLogs.some((line) => line.includes(dnsBoom) && !line.includes('test-dns-token')), 'TXT cleanup exception is logged without the DNS token');
   } finally {
     globalThis.fetch = savedFetch;
   }
