@@ -51,7 +51,7 @@ The JSON response is `{ "ots": { "<calendar url>": "<base64>" }, "tsr": "<base64
 The server is [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp). Install the pinned release:
 
 ```sh
-npx -y github:desynced/lightdrawer-mcp#v0.3.0
+npx -y github:desynced/lightdrawer-mcp#v0.3.1
 ```
 
 Only the SHA-256 fingerprint is sent to LightDrawer. The local MCP tool can read files on the person’s computer that they (or their AI client) point it at.

@@ -13,6 +13,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - The README Support section links to updates at [@lightdrawer_org](https://x.com/lightdrawer_org).
 
 ### Changed
+- The MCP install line now points at `v0.3.1`.
 - The MCP install line in the README and in HOW-IT-WORKS is pinned to `npx -y github:desynced/lightdrawer-mcp#v0.3.0`. Both notes say that only the SHA-256 fingerprint is sent to LightDrawer, and that the local MCP tool can read files on the person’s computer that they or their AI client point it at.
 
 ## [1.6.1] - 2026-11-12
