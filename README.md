@@ -303,6 +303,12 @@ Replace `vX.Y.Z` with the tag you downloaded. This proves the file was built by 
 
 Tags `v1.0.0` through `v1.4.0` were published before this signing step existed, so they do not have that statement.
 
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). There is no bounty.
+
+[How we keep LightDrawer trustworthy](docs/TRUST.md) lists the controls that are actually in place, and how to check them.
+
 ## Support
 
 LightDrawer is free and runs on donated time and free public witnesses. If it's useful to you, you can help keep it running at [paypal.me/josephball](https://paypal.me/josephball).
