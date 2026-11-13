@@ -9,8 +9,8 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 ## Unreleased
 
 ### Changed
-- How we keep LightDrawer trustworthy now says the main ruleset requires the automated tests to pass, and that v1.6.2 is the first release with signed build provenance. Formatting in its settings list is restored.
-- package.json now reads 1.6.2. The v1.6.2 tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
+- [How we keep LightDrawer trustworthy](docs/TRUST.md) now says the `main` ruleset requires the automated tests to pass, and that `v1.6.2` is the first release with signed build provenance. Formatting in its settings list is restored.
+- `package.json` now reads 1.6.2. The `v1.6.2` tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
 
 ## [1.6.2] - 2026-11-13
 
