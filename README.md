@@ -1,5 +1,7 @@
 # LightDrawer
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/desynced/lightdrawer/badge)](https://scorecard.dev/viewer/?uri=github.com/desynced/lightdrawer)
+
 ![LightDrawer](examples/brand/logo-lockup.png)
 
 **Prove this file existed, unchanged, at this time — and let anyone check it without trusting us.**
