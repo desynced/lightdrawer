@@ -21,7 +21,8 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - Dependabot opens weekly pull requests for npm packages and for GitHub Actions. Minor and patch updates are grouped in each ecosystem, and each ecosystem keeps at most five update requests open. Every Action is pinned to a full commit SHA.
 - OpenSSF Scorecard runs on a push to main, on a weekly schedule, and when a branch protection rule changes. The result is published, and the README shows the badge.
 - Pushing a `v*` tag builds `lightdrawer-<tag>.tar.gz`, writes `SHA256SUMS.txt` for that archive and for `verify.html`, and signs build provenance for those two files with GitHub's keyless signature (Sigstore). The three files are attached to the GitHub Release for that tag. The README says how to check them. Tags `v1.0.0` through `v1.4.0` were created before this workflow, so they do not have that signature.
-- [How we keep LightDrawer trustworthy](docs/TRUST.md) lists the controls that are actually in place. It says LightDrawer is not certified. Settings that live only in GitHub are a checklist to confirm, not a claim that they are on.
+- [How we keep LightDrawer trustworthy](docs/TRUST.md) lists the controls that are actually in place, including the GitHub repository settings as of 2026-11-13 and the ones not yet on. It says LightDrawer is not certified.
+- The release workflow's write permissions moved from the workflow level to the release job. The README now verifies a release against the release workflow and its tag.
 
 ## [1.6.1] - 2026-11-12
 
