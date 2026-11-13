@@ -8,14 +8,18 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## Unreleased
 
+## [1.6.3] - 2026-11-13
+
 ### Changed
 - [How we keep LightDrawer trustworthy](docs/TRUST.md) now says the `main` ruleset requires the automated tests to pass, and that `v1.6.2` is the first release with signed build provenance. Formatting in its settings list is restored.
-- `package.json` now reads 1.6.2. The `v1.6.2` tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
+- `package.json` reads 1.6.3, and this tag matches it. The `v1.6.2` tag itself still reads 1.6.1 there, because the version was not bumped before tagging. Tags are never moved.
 
 ### Security
 - [How we keep LightDrawer trustworthy](docs/TRUST.md) now says CodeQL code scanning is on. GitHub's default setup runs it on pushes and pull requests to `main`, and on a weekly schedule. Required approving reviews are still not required.
 - `POST /api/ct/tick` no longer returns exception text. An unexpected failure is logged on the server, the JSON body says the tick failed, and D1 `last_error` can still keep the detail for the operator. The mock certificate directory name uses a random UUID instead of `Math.random()`, and the stamp-key script escapes backslashes before quotes in the printed wrangler command.
-- Future GitHub Releases also attach `*.intoto.jsonl` provenance bundles for the tarball, `verify.html`, and `SHA256SUMS.txt`. Those files are the signed provenance the release workflow already creates. `SHA256SUMS.txt` still lists only the tarball and `verify.html`. The security policy now says we acknowledge a report within 14 days and aim to fix a confirmed vulnerability within 60 days. `npm test` includes property-based parser tests, and `npm run lint` checks `src/`, `scripts/`, and `test/`.
+- The README shows the OpenSSF Best Practices badge (passing). ([#15](https://github.com/desynced/lightdrawer/pull/15))
+- `minimatch`, used only by the lint tool and never shipped, is pinned to 11.0.8 to clear a moderate advisory (GHSA-g3hv-75wg-m249). `npm audit` reports 0 vulnerabilities. ([#16](https://github.com/desynced/lightdrawer/pull/16))
+- GitHub Releases now also attach `*.intoto.jsonl` provenance bundles for the tarball, `verify.html`, and `SHA256SUMS.txt`. Those files are the signed provenance the release workflow already creates. `SHA256SUMS.txt` still lists only the tarball and `verify.html`. The security policy now says we acknowledge a report within 14 days and aim to fix a confirmed vulnerability within 60 days. `npm test` includes property-based parser tests, and `npm run lint` checks `src/`, `scripts/`, and `test/`.
 
 ## [1.6.2] - 2026-11-13
 
@@ -141,6 +145,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - One readable receipt plus `verify.html`, a verifier that works offline.
 - Free, with no account.
 
+[1.6.3]: https://github.com/desynced/lightdrawer/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/desynced/lightdrawer/compare/v1.4.0...v1.6.2
 [1.4.0]: https://github.com/desynced/lightdrawer/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/desynced/lightdrawer/compare/v1.3.0...v1.3.1
