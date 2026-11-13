@@ -9,10 +9,15 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/build.mjs && node test/run.mjs",
     "test:live": "node scripts/build.mjs && node test/run.mjs --live",
+    "lint": "eslint src scripts test",
     "dev": "node scripts/build.mjs && wrangler dev",
     "check": "node scripts/build.mjs && wrangler deploy --dry-run --outdir build/dry-run"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "fast-check": "^4.10.2",
+    "globals": "^17.14.0",
     "wrangler": "^4.158.0"
   },
   "allowScripts": {

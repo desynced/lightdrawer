@@ -13,6 +13,7 @@ import { runMcpLaneTests } from './mcp-lane.mjs';
 import { runStampDedupTests } from './stamp-dedup.mjs';
 import { runStampMetricsTests } from './stamp-metrics.mjs';
 import { runApiHardeningTests } from './api-hardening.mjs';
+import { runPropertyTests } from './property.js';
 import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const core = readFileSync(join(root, 'build/core.js'), 'utf8');
@@ -170,7 +171,7 @@ console.log('Certificate Transparency helpers (Merkle, names, ct.json, verifier)
   const plan = L.ctPlanAnchor(st, tAnchor);
   ok(plan && plan.hostnames.length === 1 && plan.hostnames[0] === closed[0].hostname, 'plans one SAN for the closed sub-batch');
 
-  const { mockIssueCertificate, mockCertTempSuffix, acmeIssue, createMockAcmeDns, runCli } = await import(new URL('../scripts/ct-anchor.mjs', import.meta.url));
+  const { mockIssueCertificate, mockCertTempSuffix, acmeIssue, createMockAcmeDns } = await import(new URL('../scripts/ct-anchor.mjs', import.meta.url));
   const suffix = mockCertTempSuffix();
   ok(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(suffix) && suffix.length >= 16, 'mock cert temp directory suffix is a UUID');
   ok(suffix !== mockCertTempSuffix() && !/Math\.random/.test(mockIssueCertificate.toString() + mockCertTempSuffix.toString()), 'mock cert temp directory does not use Math.random');
@@ -236,8 +237,6 @@ console.log('CT runner CLI (temp state file, mock issuer)');
   await runCli(['submit', dig, '--state', state, '--now', '2026-11-09T10:00:00Z']);
   await runCli(['close-sub-batch', '--state', state, '--now', '2026-11-09T10:16:00Z']);
   await runCli(['issue', '--state', state, '--now', '2026-11-09T14:01:00Z', '--issuer', 'mock', '--force']);
-  const outPath = join(root, 'build/ct-upgrade-out.json');
-  const { writeFileSync: wf, readFileSync: rf } = await import('node:fs');
   const { spawnSync } = await import('node:child_process');
   const r = spawnSync(process.execPath, [join(root, 'scripts/ct-anchor.mjs'), 'upgrade', dig, '--state', state], { encoding: 'utf8' });
   ok(r.status === 0 && /"status": "anchored"/.test(r.stdout), 'CLI upgrade prints an anchored ct.json');
@@ -322,6 +321,7 @@ await runMcpLaneTests(ok);
 await runStampDedupTests(ok);
 await runStampMetricsTests(ok);
 await runApiHardeningTests(ok);
+await runPropertyTests(ok);
 
 if (live) {
   console.log('LIVE: stamp a throwaway test file (hash only) at OpenTimestamps calendars + FreeTSA');

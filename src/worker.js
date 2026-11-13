@@ -297,7 +297,7 @@ async function handleUpgrade(req, env, url, ctx) {
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   }
-  catch (e) { return json({ error: 'calendar unreachable' }, 502, cors); }
+  catch { return json({ error: 'calendar unreachable' }, 502, cors); }
   if (r.status === 404) return json({ pending: true }, 404, { ...cors, 'cache-control': 'public, max-age=300' });
   if (!r.ok) return json({ error: 'calendar HTTP ' + r.status }, 502, cors);
   const bytes = new Uint8Array(await r.arrayBuffer());
@@ -345,7 +345,7 @@ async function handleCtUpgrade(req, env, url) {
       sub_batch: { id: row.batch_id, opened_at: row.opened_at, closed_at: row.closed_at },
       issued_at: row.issued_at,
     }, 200, cors);
-  } catch (e) {
+  } catch {
     return json({ error: 'CT store error' }, 502, cors);
   }
 }
@@ -356,7 +356,7 @@ async function handleReceiptLookup(req, env, url) {
   const asJson = wantsJson(req, url.pathname);
   const respond = (opts) => (asJson ? jsonResponse(req, opts) : htmlResponse(req, { ...opts, origin }));
   if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'GET only' }, 405);
-  let digest = null;
+  let digest;
   if (url.pathname === '/api/lookup') {
     digest = normalizeDigest(url.searchParams.get('digest') || '');
     if (!digest) return respond({ kind: 'malformed', digest: null, status: 400 });
@@ -372,7 +372,7 @@ async function handleReceiptLookup(req, env, url) {
     const record = await lookupStamp(env.CT_DB, digest);
     if (!record.found) return respond({ kind: 'not_found', digest, record, status: 404 });
     return respond({ kind: 'found', digest, record, status: 200 });
-  } catch (e) {
+  } catch {
     return respond({ kind: 'error', digest, status: 502 });
   }
 }
@@ -440,7 +440,7 @@ export default {
     if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, 404);
     return env.ASSETS.fetch(req);
   },
-  async scheduled(event, env, ctx) {
+  async scheduled(event, env, _ctx) {
     await pruneMcpLaneUsage(env);
     await pruneStampDedup(env);
     await runCtTick(env, { force: false, includeOpen: false });

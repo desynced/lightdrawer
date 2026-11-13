@@ -5,7 +5,7 @@ LightDrawer is not SOC 2 or otherwise certified. This page lists the controls th
 ## What you can check
 
 - **Your file stays on your computer.** The site hashes the file in the browser and does not upload it. [How it works](../README.md#how-it-works).
-- **The code is public.** LightDrawer is open source under the [MIT license](../LICENSE).
+- **The code is public.** LightDrawer is open source under the [MIT license](../LICENSE). Proposed changes go through a pull request. [CONTRIBUTING.md](../CONTRIBUTING.md).
 - **You can report a security problem in private.** [SECURITY.md](../SECURITY.md) tells you how. Write to security@lightdrawer.org, or open a [private GitHub advisory](https://github.com/desynced/lightdrawer/security/advisories/new). There is no bounty.
 - **The site publishes a security contact.** [/.well-known/security.txt](https://lightdrawer.org/.well-known/security.txt) points at those same private advisories. The copy in this repo is [web/ui/.well-known/security.txt](../web/ui/.well-known/security.txt).
 - **Tests run on every change.** GitHub Actions runs the offline test suite on every pull request and every push to main. [ci.yml](../.github/workflows/ci.yml).
@@ -20,13 +20,13 @@ LightDrawer is not SOC 2 or otherwise certified. This page lists the controls th
 
 Hashing uses SHA-256 in the browser, in 4 MB chunks, so the file bytes are not sent to the Worker. What is stored, and for how long, is described in [HOW-IT-WORKS.md](../HOW-IT-WORKS.md).
 
-The CI workflow checks out the repo with credentials persistence turned off, installs from `package-lock.json` with `npm ci`, and runs `npm test` (`node scripts/build.mjs && node test/run.mjs`) on Node 20. It does not run `test/e2e_browser.py` or `npm run test:live`.
+The CI workflow checks out the repo with credentials persistence turned off, installs from `package-lock.json` with `npm ci`, and runs `npm test` (`node scripts/build.mjs && node test/run.mjs`) on Node 20. It then runs `npm run lint` (ESLint on `src/`, `scripts/`, and `test/`). It does not run `test/e2e_browser.py` or `npm run test:live`.
 
 Dependabot groups minor and patch updates for npm and for GitHub Actions, and keeps at most five open update pull requests for each. The workflow files pin `actions/checkout`, `actions/setup-node`, `actions/upload-artifact`, `actions/attest-build-provenance`, `ossf/scorecard-action`, and `github/codeql-action/upload-sarif` to a 40-character commit SHA.
 
 Scorecard runs on a push to `main`, every Saturday, and on the `branch_protection_rule` event. The job publishes results (`publish_results: true`) and uploads the SARIF file to code scanning. The workflow's own permissions are read-only except for `security-events: write` and `id-token: write` on that job.
 
-The release workflow runs only when a tag matching `v*` is pushed. After the same offline tests, it builds `lightdrawer-<tag>.tar.gz` containing `public/`, `build/core.js`, `src/`, `migrations/`, `schema/`, `trust/`, `package.json`, `package-lock.json`, `wrangler.jsonc` (the committed template, placeholders only), `LICENSE`, `README.md`, and `CHANGELOG.md`. `SHA256SUMS.txt` covers that tarball and a standalone `verify.html`. `actions/attest-build-provenance` signs those two files with GitHub's keyless OpenID Connect certificate (Sigstore). The three files are attached to the GitHub Release for that tag, and the notes are the matching changelog section when one exists. Check them with:
+The release workflow runs only when a tag matching `v*` is pushed. After the same offline tests, it builds `lightdrawer-<tag>.tar.gz` containing `public/`, `build/core.js`, `src/`, `migrations/`, `schema/`, `trust/`, `package.json`, `package-lock.json`, `wrangler.jsonc` (the committed template, placeholders only), `LICENSE`, `README.md`, and `CHANGELOG.md`. `SHA256SUMS.txt` covers that tarball and a standalone `verify.html`. It does not cover the provenance files. `actions/attest-build-provenance` signs the tarball, `verify.html`, and `SHA256SUMS.txt` with GitHub's keyless OpenID Connect certificate (Sigstore). Those three files are attached to the GitHub Release for that tag, and so are three `*.intoto.jsonl` provenance bundles, one for each signed file. The bundles are that same attestation, saved as files, starting with the first release after this change. The notes are the matching changelog section when one exists. Check them with:
 
 ```sh
 sha256sum -c SHA256SUMS.txt
@@ -36,11 +36,23 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag. This is the usual check, and it is what already works for `v1.6.2`.
 
-You can check `verify.html` the same way.
+You can check `verify.html` and `SHA256SUMS.txt` the same way.
 
-`v1.6.2` is the first release with signed build provenance. Tags `v1.0.0` through `v1.4.0` were pushed before the release workflow existed, so they do not have it. Versions 1.5.0 through 1.6.1 were never tagged; their changes are included in `v1.6.2`.
+Starting with the first release after this change, you can also check a downloaded bundle offline:
+
+```sh
+gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
+  --repo desynced/lightdrawer \
+  --bundle lightdrawer-vX.Y.Z.tar.gz.intoto.jsonl \
+  --signer-workflow desynced/lightdrawer/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
+```
+
+`verify.html` and `SHA256SUMS.txt` take the same `--bundle` flag with their own `.intoto.jsonl` file.
+
+`v1.6.2` is the first release with signed build provenance. That provenance is in GitHub's attestation store. The `v1.6.2` release does not include an `*.intoto.jsonl` file. Tags `v1.0.0` through `v1.4.0` were pushed before the release workflow existed, so they do not have it. Versions 1.5.0 through 1.6.1 were never tagged; their changes are included in `v1.6.2`.
 
 The offline checker is built into `public/verify.html` from `web/ui/verify.html`. It can check a receipt from a local file. It does not need this website unless you opt in to an online upgrade.
 

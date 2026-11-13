@@ -4,7 +4,7 @@
 // into a closed sub-batch, that timestamp is deleted; only the batch window
 // (ct_batches.opened_at / closed_at) remains, so the honest label is
 // "stamped no later than" the window close.
-const DIGEST_RE = /^[0-9a-f]{64}$/;
+export const DIGEST_RE = /^[0-9a-f]{64}$/;
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 

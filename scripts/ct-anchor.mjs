@@ -155,7 +155,7 @@ export async function acmeIssue({ directoryUrl, hostnames, fetchFn, setTxt, clea
 }
 
 /* In-process ACME + DNS mock for tests. Does not bind ports or touch real DNS. */
-export function createMockAcmeDns(hostnamesExpected) {
+export function createMockAcmeDns(_hostnamesExpected) {
   const txt = new Map();
   let nonceN = 1;
   const orders = new Map(), authz = new Map();
@@ -246,7 +246,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (cmd === 'refuse-prod-check') {
     let blocked = false;
     try { assertNotProductionDirectory('https://acme-v02.api.letsencrypt.org/directory'); }
-    catch (e) { blocked = true; }
+    catch { blocked = true; }
     if (!blocked) throw new Error('production directory was not blocked');
     console.log('ok: production ACME directory is refused');
     return 0;

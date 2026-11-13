@@ -302,11 +302,27 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag. This is the usual check, and it is what already works for `v1.6.2`.
 
-You can check `verify.html` the same way.
+You can check `verify.html` and `SHA256SUMS.txt` the same way.
 
-Tags `v1.0.0` through `v1.4.0` were published before this signing step existed, so they do not have that statement.
+Starting with the first release after this change, the release also attaches `*.intoto.jsonl` provenance bundles. Each file is the same attestation, saved next to the file it covers: `lightdrawer-vX.Y.Z.tar.gz.intoto.jsonl`, `verify.html.intoto.jsonl`, and `SHA256SUMS.txt.intoto.jsonl`. You can check a downloaded bundle offline like this:
+
+```sh
+gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
+  --repo desynced/lightdrawer \
+  --bundle lightdrawer-vX.Y.Z.tar.gz.intoto.jsonl \
+  --signer-workflow desynced/lightdrawer/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
+```
+
+`verify.html` and `SHA256SUMS.txt` take the same `--bundle` flag with their own `.intoto.jsonl` file. `SHA256SUMS.txt` still lists only the tarball and `verify.html`.
+
+`v1.6.2` has signed provenance in GitHub's attestation store, but that release does not include an `*.intoto.jsonl` file. Tags `v1.0.0` through `v1.4.0` were pushed before the release workflow existed, so they do not have this signature.
+
+## Contributing
+
+LightDrawer is a public repository. The usual way to propose a change is a pull request against `main`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 

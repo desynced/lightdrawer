@@ -12,6 +12,7 @@ jobs:
   release:
     name: Build, attest, and publish
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write
@@ -35,9 +36,11 @@ jobs:
         run: npm test
 
       - name: Package release files
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           mkdir -p dist
           # wrangler.jsonc in this archive is the committed template. It has
           # placeholders only. The private production config is not in git.
@@ -83,22 +86,47 @@ jobs:
           PY
 
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/lightdrawer-${{ github.ref_name }}.tar.gz
             dist/verify.html
+            dist/SHA256SUMS.txt
+
+      # One Sigstore bundle covers every subject. Copy it to one name per file
+      # so the same attestation is also a release asset. SHA256SUMS.txt stays a
+      # checksum of the tarball and verify.html only.
+      - name: Copy provenance bundles
+        env:
+          TAG: ${{ github.ref_name }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          bundle="$BUNDLE_PATH"
+          if [ -z "$bundle" ] || [ ! -f "$bundle" ] || [ ! -s "$bundle" ]; then
+            echo "attest bundle-path is missing or empty" >&2
+            exit 1
+          fi
+          cp "$bundle" "dist/lightdrawer-${tag}.tar.gz.intoto.jsonl"
+          cp "$bundle" dist/verify.html.intoto.jsonl
+          cp "$bundle" dist/SHA256SUMS.txt.intoto.jsonl
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           assets=(
             "dist/lightdrawer-${tag}.tar.gz"
             dist/SHA256SUMS.txt
             dist/verify.html
+            "dist/lightdrawer-${tag}.tar.gz.intoto.jsonl"
+            dist/verify.html.intoto.jsonl
+            dist/SHA256SUMS.txt.intoto.jsonl
           )
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --notes-file dist/notes.md
