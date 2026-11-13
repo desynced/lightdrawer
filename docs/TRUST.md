@@ -36,11 +36,11 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace vX.Y.Z with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
 
-You can check verify.html the same way.
+You can check `verify.html` the same way.
 
-Tags `v1.0.0` through `v1.4.0` were pushed before this workflow existed, so they do not have that statement. Versions 1.5.0 through 1.6.1 are in the changelog and in `package.json` and are not tagged yet.
+v1.6.2 is the first release with signed build provenance. Tags v1.0.0 through v1.4.0 were pushed before the release workflow existed, so they do not have it. Versions 1.5.0 through 1.6.1 were never tagged; their changes are included in v1.6.2.
 
 The offline checker is built into `public/verify.html` from `web/ui/verify.html`. It can check a receipt from a local file. It does not need this website unless you opt in to an online upgrade.
 

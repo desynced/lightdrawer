@@ -302,9 +302,9 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace vX.Y.Z with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
 
-You can check verify.html the same way.
+You can check `verify.html` the same way.
 
 Tags `v1.0.0` through `v1.4.0` were published before this signing step existed, so they do not have that statement.
 
