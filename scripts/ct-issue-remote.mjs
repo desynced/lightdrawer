@@ -5,12 +5,6 @@
 // The Worker cron is the normal issuer once CF_DNS_TOKEN is set as a Worker secret.
 import { runCtTick } from '../src/ct-runtime.js';
 
-function requireEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(name + ' is not set');
-  return v;
-}
-
 function remoteD1({ accountId, databaseId, token }) {
   async function query(sql, params = []) {
     const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`, {

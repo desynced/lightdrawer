@@ -14,6 +14,16 @@ Please say what you found, how to reproduce it, and what you think the effect is
 
 There is **no bounty**.
 
+## What happens next
+
+We will acknowledge a report within 14 days.
+
+We will aim to fix a confirmed vulnerability within 60 days, sooner when it is severe.
+
+If a CVE (or similar) is assigned before a fix is released, the changelog entry for that release will name it.
+
+There is still no bounty.
+
 ## In scope
 
 - The LightDrawer website

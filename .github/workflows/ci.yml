@@ -33,3 +33,7 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # ESLint on src/, scripts/, and test/ only. Still offline: no test:live, no browser.
+      - name: Lint
+        run: npm run lint
