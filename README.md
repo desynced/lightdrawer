@@ -41,7 +41,7 @@ Do not call `/api/stamp` from another website’s page, and do not put a LightDr
 Developers can stamp, verify, and look up fingerprints from any MCP client — Claude, Cursor, [Koru](https://github.com/koruworks/mono), and others — with a small local server: [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp).
 
 ```sh
-npx -y github:desynced/lightdrawer-mcp#v0.3.0
+npx -y github:desynced/lightdrawer-mcp#v0.3.1
 ```
 
 Only the SHA-256 fingerprint is sent to LightDrawer. The local MCP tool can read files on the person’s computer that they (or their AI client) point it at.
