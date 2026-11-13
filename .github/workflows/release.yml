@@ -12,6 +12,7 @@ jobs:
   release:
     name: Build, attest, and publish
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write
@@ -35,9 +36,11 @@ jobs:
         run: npm test
 
       - name: Package release files
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           mkdir -p dist
           # wrangler.jsonc in this archive is the committed template. It has
           # placeholders only. The private production config is not in git.
@@ -95,10 +98,13 @@ jobs:
       # so the same attestation is also a release asset. SHA256SUMS.txt stays a
       # checksum of the tarball and verify.html only.
       - name: Copy provenance bundles
+        env:
+          TAG: ${{ github.ref_name }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          bundle="${{ steps.attest.outputs.bundle-path }}"
+          tag="$TAG"
+          bundle="$BUNDLE_PATH"
           if [ -z "$bundle" ] || [ ! -f "$bundle" ] || [ ! -s "$bundle" ]; then
             echo "attest bundle-path is missing or empty" >&2
             exit 1
@@ -110,9 +116,10 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="$TAG"
           assets=(
             "dist/lightdrawer-${tag}.tar.gz"
             dist/SHA256SUMS.txt

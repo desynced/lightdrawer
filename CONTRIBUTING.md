@@ -4,7 +4,7 @@ LightDrawer is a public repository. The usual way to propose a change is a pull 
 
 Fork the repository (or use a branch), make the change, and open a pull request. Do not push straight to `main`. The ruleset requires a pull request, and the "Test" check must pass.
 
-Run `npm ci && npm test` locally before you open the pull request. The same command runs in GitHub Actions.
+Run `npm ci && npm test && npm run lint` locally before you open the pull request. The same command runs in GitHub Actions.
 
 When you add major new functionality, add or update tests for it in the automated suite.
 
