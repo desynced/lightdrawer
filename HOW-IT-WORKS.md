@@ -48,6 +48,14 @@ The JSON response is `{ "ots": { "<calendar url>": "<base64>" }, "tsr": "<base64
 
 `POST /api/mcp/stamp` is a separate entrance used by the [LightDrawer MCP server](https://github.com/desynced/lightdrawer-mcp) (and any similar local tool). It exists so a developer’s AI client can stamp a hash without a browser human check and without sharing an API key.
 
+The server is [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp). Install the pinned release:
+
+```sh
+npx -y github:desynced/lightdrawer-mcp#v0.3.0
+```
+
+Only the SHA-256 fingerprint is sent to LightDrawer. The local MCP tool can read files on the person’s computer that they (or their AI client) point it at.
+
 Request body (same shape as a keyed `/api/stamp`, no `Authorization` header, no Turnstile token):
 
 ```json
