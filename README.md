@@ -38,11 +38,13 @@ Do not call `/api/stamp` from another website’s page, and do not put a LightDr
 
 ## Stamp from an AI tool (MCP)
 
-Developers can stamp, verify, and look up fingerprints from any MCP client — Claude, Cursor, [Koru](https://github.com/koruworks/mono), and others — with a small local server: [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp). It hashes files on the developer’s own machine and sends only that hash to LightDrawer.
+Developers can stamp, verify, and look up fingerprints from any MCP client — Claude, Cursor, [Koru](https://github.com/koruworks/mono), and others — with a small local server: [lightdrawer-mcp](https://github.com/desynced/lightdrawer-mcp).
 
 ```sh
-npx -y github:desynced/lightdrawer-mcp
+npx -y github:desynced/lightdrawer-mcp#v0.3.0
 ```
+
+Only the SHA-256 fingerprint is sent to LightDrawer. The local MCP tool can read files on the person’s computer that they (or their AI client) point it at.
 
 No API key is required. Stamps go through an open lane (`POST /api/mcp/stamp`). A public lane should keep the short burst limit and the designed caps: 20 stamps per address per UTC hour, and 500 per UTC day, or stricter. Setting a cap to `0` turns that cap off, which is an operator's choice. If the lane refuses a request or is switched off, the tool gives a browser link instead so the person can finish on the website.
 
@@ -289,6 +291,8 @@ Or open `verify.html` (works from `file://`; sends nothing unless you opt in to 
 ## Support
 
 LightDrawer is free and runs on donated time and free public witnesses. If it's useful to you, you can help keep it running at [paypal.me/josephball](https://paypal.me/josephball).
+
+Updates: [@lightdrawer_org](https://x.com/lightdrawer_org)
 
 ## License
 

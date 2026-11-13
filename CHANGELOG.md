@@ -6,6 +6,15 @@ The code history is in the [commit log](https://github.com/desynced/lightdrawer/
 
 Version numbers follow [Semantic Versioning](https://semver.org): new features raise the middle number, and fixes raise the last.
 
+## Unreleased
+
+### Added
+- A security policy (`SECURITY.md`), dated 2026-11-12 (US Central). Reports can go to security@lightdrawer.org or to a private GitHub advisory. There is no bounty.
+- The README Support section links to updates at [@lightdrawer_org](https://x.com/lightdrawer_org).
+
+### Changed
+- The MCP install line in the README and in HOW-IT-WORKS is pinned to `npx -y github:desynced/lightdrawer-mcp#v0.3.0`. Both notes say that only the SHA-256 fingerprint is sent to LightDrawer, and that the local MCP tool can read files on the person’s computer that they or their AI client point it at.
+
 ## [1.6.1] - 2026-11-12
 
 ### Fixed
