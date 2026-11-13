@@ -8,7 +8,7 @@ You can also open a private GitHub advisory:
 
 https://github.com/desynced/lightdrawer/security/advisories/new
 
-The site file `/.well-known/security.txt` already lists that address.
+The site file `/.well-known/security.txt` also points to GitHub private advisories.
 
 Please say what you found, how to reproduce it, and what you think the effect is. We will try to respond.
 
