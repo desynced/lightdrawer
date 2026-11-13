@@ -296,10 +296,15 @@ Download the release files for a version tag (`lightdrawer-vX.Y.Z.tar.gz`, `veri
 
 ```sh
 sha256sum -c SHA256SUMS.txt
-gh attestation verify lightdrawer-vX.Y.Z.tar.gz --repo desynced/lightdrawer
+gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
+  --repo desynced/lightdrawer \
+  --signer-workflow desynced/lightdrawer/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace `vX.Y.Z` with the tag you downloaded. This proves the file was built by this repo's GitHub workflow from that tag.
+Replace vX.Y.Z with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+
+You can check verify.html the same way.
 
 Tags `v1.0.0` through `v1.4.0` were published before this signing step existed, so they do not have that statement.
 

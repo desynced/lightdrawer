@@ -30,10 +30,17 @@ The release workflow runs only when a tag matching `v*` is pushed. After the sam
 
 ```sh
 sha256sum -c SHA256SUMS.txt
-gh attestation verify lightdrawer-vX.Y.Z.tar.gz --repo desynced/lightdrawer
+gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
+  --repo desynced/lightdrawer \
+  --signer-workflow desynced/lightdrawer/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
 ```
 
-A successful check proves the file was built by this repo's GitHub workflow from that tag. Tags `v1.0.0` through `v1.4.0` were pushed before this workflow existed, so they do not have that statement. Versions 1.5.0 through 1.6.1 are in the changelog and in `package.json` and are not tagged yet.
+Replace vX.Y.Z with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag.
+
+You can check verify.html the same way.
+
+Tags `v1.0.0` through `v1.4.0` were pushed before this workflow existed, so they do not have that statement. Versions 1.5.0 through 1.6.1 are in the changelog and in `package.json` and are not tagged yet.
 
 The offline checker is built into `public/verify.html` from `web/ui/verify.html`. It can check a receipt from a local file. It does not need this website unless you opt in to an online upgrade.
 
