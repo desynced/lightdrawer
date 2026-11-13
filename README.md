@@ -290,6 +290,19 @@ Or open `verify.html` (works from `file://`; sends nothing unless you opt in to 
 - `examples/stamp-button/` — a demo host page with copy-paste stamp and receipt-check buttons (does not include receipt ZIP files).
 - `examples/*.png` — screenshots of the maker, verifier, and cover page.
 
+## Verifying releases
+
+Download the release files for a version tag (`lightdrawer-vX.Y.Z.tar.gz`, `verify.html`, and `SHA256SUMS.txt`). In the folder that contains those files, check the checksum and the signed build provenance:
+
+```sh
+sha256sum -c SHA256SUMS.txt
+gh attestation verify lightdrawer-vX.Y.Z.tar.gz --repo desynced/lightdrawer
+```
+
+Replace `vX.Y.Z` with the tag you downloaded. This proves the file was built by this repo's GitHub workflow from that tag.
+
+Tags `v1.0.0` through `v1.4.0` were published before this signing step existed, so they do not have that statement.
+
 ## Support
 
 LightDrawer is free and runs on donated time and free public witnesses. If it's useful to you, you can help keep it running at [paypal.me/josephball](https://paypal.me/josephball).
