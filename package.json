@@ -18,7 +18,7 @@
     "eslint": "^10.14.0",
     "fast-check": "^4.10.2",
     "globals": "^17.14.0",
-    "wrangler": "^4.158.0"
+    "wrangler": "^4.160.0"
   },
   "overrides": {
     "minimatch": "11.0.8"
