@@ -55,7 +55,9 @@ export async function runExamplePagesTests(ok) {
     ok(existsSync(built) && readFileSync(built, 'utf8') === src, `build copies the ${name}`);
     ok(!/<script\b/i.test(src) && !EVENT_ATTR.test(src) && !/<style\b/i.test(src) && !/\sstyle\s*=/i.test(src), `${name} has no scripts, inline handlers, or inline styles`);
     ok(/<link rel="stylesheet" href="\/style\.css">/.test(src) && /<main class="docs example-page">/.test(src), `${name} uses the site stylesheet and page layout`);
-    ok(src.includes('<header class="top">') && src.includes('https://paypal.me/josephball'), `${name} has the site header and footer`);
+    const footer = (src.match(/<footer>[\s\S]*?<\/footer>/) || [''])[0];
+    const supportLink = hrefs(footer).some((h) => { try { const u = new URL(h); return u.protocol === 'https:' && u.host === 'paypal.me' && u.pathname === '/josephball'; } catch { return false; } });
+    ok(src.includes('<header class="top">') && supportLink, `${name} has the site header and footer`);
     const ogUrl = (src.match(/<meta property="og:url" content="([^"]*)">/) || [])[1];
     let og = null;
     try { og = new URL(ogUrl); } catch { /* checked below */ }
