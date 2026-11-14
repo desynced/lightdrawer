@@ -8,7 +8,7 @@
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
       return d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
-    } catch (e) { return String(iso); }
+    } catch (_e) { return String(iso); }
   }
   // provenance form
   for (const [k, label, help] of PROVENANCE_FIELDS) {

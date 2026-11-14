@@ -21,7 +21,7 @@ LightDrawer is not SOC 2 or otherwise certified. This page lists the controls th
 
 Hashing uses SHA-256 in the browser, in 4 MB chunks, so the file bytes are not sent to the Worker. What is stored, and for how long, is described in [HOW-IT-WORKS.md](../HOW-IT-WORKS.md).
 
-The CI workflow checks out the repo with credentials persistence turned off, installs from `package-lock.json` with `npm ci`, and runs `npm test` (`node scripts/build.mjs && node test/run.mjs`) on Node 20. It then runs `npm run lint` (ESLint on `src/`, `scripts/`, and `test/`). It does not run `test/e2e_browser.py` or `npm run test:live`.
+The CI workflow checks out the repo with credentials persistence turned off, installs from `package-lock.json` with `npm ci`, and runs `npm test` (`node scripts/build.mjs && node test/run.mjs`) on Node 20. It then runs `npm run lint`: ESLint on `src/`, `scripts/`, `test/`, and the browser code the site ships (`public/app.js`, the script inside `verify.html`, the stamp button and its helper), with zero warnings allowed. It does not run `test/e2e_browser.py` or `npm run test:live`.
 
 Dependabot groups minor and patch updates for npm and for GitHub Actions, and keeps at most five open update pull requests for each. The workflow files pin `actions/checkout`, `actions/setup-node`, `actions/upload-artifact`, `actions/attest-build-provenance`, `ossf/scorecard-action`, and `github/codeql-action/upload-sarif` to a 40-character commit SHA. The SLSA generator is the exception: `generator_generic_slsa3.yml` is called at tag `v2.1.0` (commit `f7dd8c54c2067bafc12ca7a55595d5ee9b75204a`). A commit SHA is rejected by that generator and is not a ref `slsa-verifier` trusts.
 

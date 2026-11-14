@@ -1,6 +1,7 @@
 /* Receipt = one ZIP per file: statement.json (what is stamped), proofs, cover page,
    trust anchors, and a copy of the offline verifier. Hash-only: the original file is
    never put in the receipt and never leaves the browser. */
+/* exported makeReceipt, verifyReceipt */ // used by the receipt maker (web/ui/maker.js) and the offline verifier (web/ui/verify-ui.js), not by every bundle
 const PROVENANCE_FIELDS = [
   ['source_url', 'Source URL', 'Where you found it online, if anywhere.'],
   ['source_archive_url', 'Archived copy URL', 'A perma.cc, Wayback, or Arweave link you made, if any.'],
@@ -96,7 +97,7 @@ async function verifyReceipt(files, original, opts = {}) {
   sec('File and statement', rc);
   // RFC 3161
   if (files['proofs/statement.json.tsr']) {
-    let nonce = null; try { nonce = JSON.parse(utf8dec(files['receipt.json'])).proofs.rfc3161.nonce; } catch (e) { /* optional */ }
+    let nonce = null; try { nonce = JSON.parse(utf8dec(files['receipt.json'])).proofs.rfc3161.nonce; } catch (_e) { /* optional */ }
     const r = await tsaVerify(files['proofs/statement.json.tsr'], d, TRUST, nonce);
     sec('RFC 3161 timestamp (FreeTSA)', r.checks);
     if (r.genTime && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'RFC 3161 (FreeTSA)', time: r.genTime });
@@ -125,7 +126,7 @@ async function verifyReceipt(files, original, opts = {}) {
     let ctBytes = files['proofs/ct.json'];
     if (opts.fetchCtUpgrade) {
       try {
-        let cur; try { cur = JSON.parse(utf8dec(ctBytes)); } catch (e) { cur = null; }
+        let cur; try { cur = JSON.parse(utf8dec(ctBytes)); } catch (_e) { cur = null; }
         if (!cur || cur.status === 'pending') {
           const up = await opts.fetchCtUpgrade(toHex(d));
           if (up) {
@@ -136,7 +137,7 @@ async function verifyReceipt(files, original, opts = {}) {
         }
       } catch (e) { extra.push(chk('ct.upgrade', 'warn', 'Could not upgrade the certificate-log proof', e.message)); }
     }
-    let ctObj; try { ctObj = JSON.parse(utf8dec(ctBytes)); } catch (e) { ctObj = null; }
+    let ctObj; try { ctObj = JSON.parse(utf8dec(ctBytes)); } catch (_e) { ctObj = null; }
     const r = ctObj ? await ctVerify(ctObj, toHex(d), TRUST) : { checks: [chk('ct', 'fail', 'ct.json is not valid JSON', '')], times: [] };
     extra.push(...r.checks);
     sec('Certificate Transparency (public certificate log)', extra);
@@ -144,7 +145,7 @@ async function verifyReceipt(files, original, opts = {}) {
   } else sec('Certificate Transparency (public certificate log)', [chk('ct', 'skip', 'No certificate-log proof in this receipt', '')]);
   // Rekor
   if (files['proofs/rekor-entry.json']) {
-    let e; try { e = JSON.parse(utf8dec(files['proofs/rekor-entry.json'])); } catch (err) { e = null; }
+    let e; try { e = JSON.parse(utf8dec(files['proofs/rekor-entry.json'])); } catch (_err) { e = null; }
     const r = e ? await rekorVerify(e, stBytes, TRUST) : { checks: [chk('rekor', 'fail', 'rekor-entry.json is not valid JSON', '')] };
     sec('Sigstore Rekor transparency log', r.checks);
     if (r.time && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'Sigstore Rekor', time: new Date(r.time * 1000) });

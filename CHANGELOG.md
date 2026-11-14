@@ -17,6 +17,10 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 ### Fixed
 - The sealed-bids page listed "the file was zipped or renamed" as a cause of a fingerprint mismatch. Renaming a file does not change its fingerprint. It now says the file was zipped, converted, or re-saved, and notes that renaming does not change the fingerprint.
 
+### Changed
+- `npm run lint` now also checks the browser code the site ships: the receipt maker (`public/app.js`), the script inside the offline checker `verify.html` (written to `build/verify.js` by the build so it can be linted as one unit), the stamp button, and its helper script. It uses ESLint's recommended rules plus `eslint.config.js`, and any warning fails the run (`--max-warnings=0`). The CI "Test" job already runs it.
+- Fixed every finding in that code without changing what it does: the 31 in `public/app.js` and the same kinds in the `verify.html` script. Unused error variables in `catch` blocks now have a leading underscore. Two certificate and timestamp fields that were read but never used (an inner signature algorithm and the CMS digest algorithm list) are skipped instead of stored, and two final index increments that nothing read are dropped. Library functions that one bundle uses and another does not are marked with `/* exported */` comments.
+
 ## [1.6.4] - 2026-11-13
 
 ### Changed
