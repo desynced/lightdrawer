@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { runStampApiTests } from './stamp-api.mjs';
 import { runReceiptLinkTests } from './receipt-link.mjs';
 import { runStampButtonTests } from './stamp-button.mjs';
+import { runExamplePagesTests } from './example-pages.mjs';
 import { runSctLogKeysTests } from './sct-log-keys.mjs';
 import { runMcpLaneTests } from './mcp-lane.mjs';
 import { runStampDedupTests } from './stamp-dedup.mjs';
@@ -316,6 +317,7 @@ console.log('CT Worker runtime (allowlist, production ACME guard, CSR, Merkle ma
 await runStampApiTests(ok);
 await runReceiptLinkTests(ok);
 await runStampButtonTests(ok);
+await runExamplePagesTests(ok);
 await runSctLogKeysTests(ok, L);
 await runMcpLaneTests(ok);
 await runStampDedupTests(ok);

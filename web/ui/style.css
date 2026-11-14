@@ -163,3 +163,13 @@ footer{margin-top:3rem;color:var(--muted);font-size:.9rem;border-top:1px solid v
 .lightdrawer-stamp{display:inline-flex;align-items:center;gap:.5rem;font:650 1rem/1.2 system-ui,-apple-system,Segoe UI,sans-serif;color:var(--accent-ink);background:var(--accent);text-decoration:none;padding:.7rem 1.2rem;border-radius:999px}
 .lightdrawer-stamp:hover{filter:brightness(1.05);text-decoration:none}
 .lightdrawer-stamp svg{flex:0 0 auto}
+/* Example pages (e.g. /examples/sealed-bids) */
+.example-page ol,.example-page ul{padding-left:1.3rem}
+.example-page h3{margin-top:1.4rem}
+.example-page li{margin:.3rem 0}
+.table-wrap{overflow-x:auto;margin:.8rem 0}
+.example-page table{border-collapse:collapse;width:100%;font-size:.95rem}
+.example-page th,.example-page td{border:1px solid var(--line);padding:.55rem .7rem;text-align:left;vertical-align:top}
+.example-page th{background:var(--surface)}
+.example-page blockquote.sample{margin:.8rem 0;padding:1rem 1.2rem;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px}
+.example-page blockquote.sample p:first-child{margin-top:0}

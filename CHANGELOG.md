@@ -8,6 +8,9 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## Unreleased
 
+### Added
+- A plain-language example page at `/examples/sealed-bids`: how a city or agency can use receipts to show that each bid opened is the exact file the bidder sent, with step-by-step intake setup, a mismatch guide, sample bid-notice wording, and clear limits. The homepage's "Why would I use this?" section links to it.
+
 ## [1.6.4] - 2026-11-13
 
 ### Changed
