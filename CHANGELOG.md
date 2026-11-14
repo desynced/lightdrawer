@@ -8,6 +8,14 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ## Unreleased
 
+## [1.6.4] - 2026-11-13
+
+### Changed
+- `package.json` reads 1.6.4. `v1.6.3` is already tagged and is not moved. The next tag should be `v1.6.4` so it matches this version.
+
+### Security
+- Pushing a `v*` tag builds `lightdrawer-<tag>.tar.gz` and the npm pack tarball (`lightdrawer-receipts-<version>.tgz`) and attaches both, plus `verify.html` and `SHA256SUMS.txt`, to the GitHub Release. `SHA256SUMS.txt` lists those three files and not the provenance files. The SLSA GitHub generator (`generator_generic_slsa3.yml` at tag `v2.1.0`, commit `f7dd8c54c2067bafc12ca7a55595d5ee9b75204a`) signs one SLSA Build Level 3 provenance file, `lightdrawer-<tag>.intoto.jsonl`, and attaches it to that release. Check it with `slsa-verifier verify-artifact`. GitHub's native attestation is still produced with `actions/attest-build-provenance` and checked with `gh attestation verify`. The generator is referenced by its release tag because a commit SHA is rejected by the generator and by `slsa-verifier`. [Verifying a release](SECURITY.md#verifying-a-release).
+
 ## [1.6.3] - 2026-11-13
 
 ### Changed
@@ -145,6 +153,7 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 - One readable receipt plus `verify.html`, a verifier that works offline.
 - Free, with no account.
 
+[1.6.4]: https://github.com/desynced/lightdrawer/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/desynced/lightdrawer/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/desynced/lightdrawer/compare/v1.4.0...v1.6.2
 [1.4.0]: https://github.com/desynced/lightdrawer/compare/v1.3.1...v1.4.0

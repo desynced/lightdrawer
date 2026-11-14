@@ -293,7 +293,7 @@ Or open `verify.html` (works from `file://`; sends nothing unless you opt in to 
 
 ## Verifying releases
 
-Download the release files for a version tag (`lightdrawer-vX.Y.Z.tar.gz`, `verify.html`, and `SHA256SUMS.txt`). In the folder that contains those files, check the checksum and the signed build provenance:
+Download the release files for a version tag (`lightdrawer-vX.Y.Z.tar.gz`, the npm pack tarball `lightdrawer-receipts-<version>.tgz`, `verify.html`, and `SHA256SUMS.txt`). In the folder that contains those files, check the checksum and GitHub's native attestation:
 
 ```sh
 sha256sum -c SHA256SUMS.txt
@@ -303,11 +303,11 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag. This is the usual check, and it is what already works for `v1.6.2`.
+Replace `vX.Y.Z` with the tag you downloaded (in both places). A successful check shows the file was built by this repository's release workflow from that tag. This native check is what already works for `v1.6.2`.
 
-You can check `verify.html` and `SHA256SUMS.txt` the same way.
+You can check `verify.html`, `SHA256SUMS.txt`, and the npm pack tarball the same way.
 
-Starting with the first release after this change, the release also attaches `*.intoto.jsonl` provenance bundles. Each file is the same attestation, saved next to the file it covers: `lightdrawer-vX.Y.Z.tar.gz.intoto.jsonl`, `verify.html.intoto.jsonl`, and `SHA256SUMS.txt.intoto.jsonl`. You can check a downloaded bundle offline like this:
+Starting with `v1.6.3`, the release also attaches `*.intoto.jsonl` bundles copied from that native attestation: `lightdrawer-vX.Y.Z.tar.gz.intoto.jsonl`, `verify.html.intoto.jsonl`, and `SHA256SUMS.txt.intoto.jsonl`. From the next release, the npm pack tarball has one too. You can check a downloaded bundle offline like this:
 
 ```sh
 gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
@@ -317,9 +317,18 @@ gh attestation verify lightdrawer-vX.Y.Z.tar.gz \
   --source-ref refs/tags/vX.Y.Z
 ```
 
-`verify.html` and `SHA256SUMS.txt` take the same `--bundle` flag with their own `.intoto.jsonl` file. `SHA256SUMS.txt` still lists only the tarball and `verify.html`.
+`verify.html` and `SHA256SUMS.txt` take the same `--bundle` flag with their own `.intoto.jsonl` file. `SHA256SUMS.txt` lists the archive, the npm pack tarball, and `verify.html`. It does not list provenance files.
 
-`v1.6.2` has signed provenance in GitHub's attestation store, but that release does not include an `*.intoto.jsonl` file. Tags `v1.0.0` through `v1.4.0` were pushed before the release workflow existed, so they do not have this signature.
+Starting with the first release after the SLSA generator was added, the release also attaches `lightdrawer-vX.Y.Z.intoto.jsonl`. That file is SLSA Build Level 3 provenance for the archive, the npm pack tarball, `verify.html`, and `SHA256SUMS.txt`. Check it with `slsa-verifier` (the binary from [slsa-framework/slsa-verifier](https://github.com/slsa-framework/slsa-verifier/releases)):
+
+```sh
+slsa-verifier verify-artifact lightdrawer-vX.Y.Z.tar.gz \
+  --provenance-path lightdrawer-vX.Y.Z.intoto.jsonl \
+  --source-uri github.com/desynced/lightdrawer \
+  --source-tag vX.Y.Z
+```
+
+The same provenance file covers the other release files. Pass that filename instead of the archive. `v1.6.3` does not have this file. `v1.6.2` has a native attestation and no `*.intoto.jsonl` file. Tags `v1.0.0` through `v1.4.0` were pushed before the release workflow existed, so they do not have this signature. The same commands are in [SECURITY.md](SECURITY.md#verifying-a-release).
 
 ## Contributing
 
