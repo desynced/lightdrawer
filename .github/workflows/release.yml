@@ -17,6 +17,8 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,6 +44,18 @@ jobs:
           set -euo pipefail
           tag="$TAG"
           mkdir -p dist
+          # Pack before other files land in dist, and pack into a temp dir, so
+          # the tarball is the package and not a copy of the release folder.
+          pack_dir="$(mktemp -d)"
+          npm pack --pack-destination "$pack_dir"
+          pack_name="$(node -p "const p=require('./package.json'); p.name + '-' + p.version + '.tgz'")"
+          if [ ! -s "${pack_dir}/${pack_name}" ]; then
+            echo "npm pack did not write ${pack_name}" >&2
+            exit 1
+          fi
+          mv "${pack_dir}/${pack_name}" "dist/${pack_name}"
+          rmdir "$pack_dir"
+          printf '%s\n' "$pack_name" > dist/npm-pack-name.txt
           # wrangler.jsonc in this archive is the committed template. It has
           # placeholders only. The private production config is not in git.
           tar -czf "dist/lightdrawer-${tag}.tar.gz" \
@@ -60,7 +74,9 @@ jobs:
           cp public/verify.html dist/verify.html
           (
             cd dist
-            sha256sum "lightdrawer-${tag}.tar.gz" verify.html > SHA256SUMS.txt
+            # SHA256SUMS.txt stays a checksum of the release archives and
+            # verify.html. It does not cover provenance files.
+            sha256sum "lightdrawer-${tag}.tar.gz" "$pack_name" verify.html > SHA256SUMS.txt
           )
           python3 - "$tag" CHANGELOG.md dist/notes.md <<'PY'
           import sys
@@ -85,18 +101,53 @@ jobs:
           open(dest, "w", encoding="utf-8").write(notes)
           PY
 
+      # Subjects are the release archives, verify.html, and SHA256SUMS.txt.
+      # The generator wants sha256sum's text, base64-encoded on one line.
+      - name: Hash release assets
+        id: hash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          pack_name="$(cat dist/npm-pack-name.txt)"
+          files=(
+            "lightdrawer-${tag}.tar.gz"
+            "$pack_name"
+            verify.html
+            SHA256SUMS.txt
+          )
+          (
+            cd dist
+            for f in "${files[@]}"; do
+              if [ ! -s "$f" ]; then
+                echo "missing release asset: $f" >&2
+                exit 1
+              fi
+            done
+            echo "SLSA subjects:"
+            sha256sum "${files[@]}"
+            hashes="$(sha256sum "${files[@]}" | base64 -w0)"
+            if [ -z "$hashes" ]; then
+              echo "empty subject hashes" >&2
+              exit 1
+            fi
+            echo "hashes=${hashes}" >> "$GITHUB_OUTPUT"
+          )
+
       - name: Attest build provenance
         id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/lightdrawer-${{ github.ref_name }}.tar.gz
+            dist/*.tgz
             dist/verify.html
             dist/SHA256SUMS.txt
 
       # One Sigstore bundle covers every subject. Copy it to one name per file
       # so the same attestation is also a release asset. SHA256SUMS.txt stays a
-      # checksum of the tarball and verify.html only.
+      # checksum of the archives and verify.html only.
       - name: Copy provenance bundles
         env:
           TAG: ${{ github.ref_name }}
@@ -105,11 +156,13 @@ jobs:
           set -euo pipefail
           tag="$TAG"
           bundle="$BUNDLE_PATH"
+          pack_name="$(cat dist/npm-pack-name.txt)"
           if [ -z "$bundle" ] || [ ! -f "$bundle" ] || [ ! -s "$bundle" ]; then
             echo "attest bundle-path is missing or empty" >&2
             exit 1
           fi
           cp "$bundle" "dist/lightdrawer-${tag}.tar.gz.intoto.jsonl"
+          cp "$bundle" "dist/${pack_name}.intoto.jsonl"
           cp "$bundle" dist/verify.html.intoto.jsonl
           cp "$bundle" dist/SHA256SUMS.txt.intoto.jsonl
 
@@ -120,11 +173,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="$TAG"
+          pack_name="$(cat dist/npm-pack-name.txt)"
           assets=(
             "dist/lightdrawer-${tag}.tar.gz"
+            "dist/${pack_name}"
             dist/SHA256SUMS.txt
             dist/verify.html
             "dist/lightdrawer-${tag}.tar.gz.intoto.jsonl"
+            "dist/${pack_name}.intoto.jsonl"
             dist/verify.html.intoto.jsonl
             dist/SHA256SUMS.txt.intoto.jsonl
           )
@@ -136,3 +192,21 @@ jobs:
               --title "$tag" \
               --notes-file dist/notes.md
           fi
+
+  provenance:
+    name: SLSA provenance
+    needs: release
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # v2.1.0 is f7dd8c54c2067bafc12ca7a55595d5ee9b75204a.
+    # This reusable workflow has to be called by that release tag. A commit
+    # SHA is rejected (the generator requires refs/tags/vX.Y.Z) and
+    # slsa-verifier will not trust a SHA ref, so a SHA pin would not be
+    # SLSA Build Level 3. Every other action in this file is SHA-pinned.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.release.outputs.hashes }}
+      upload-assets: true
+      provenance-name: lightdrawer-${{ github.ref_name }}.intoto.jsonl
