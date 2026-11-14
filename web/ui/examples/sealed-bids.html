@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F2EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1A1814" media="(prefers-color-scheme: dark)">
+<title>Example: sealed bids for public contracts — LightDrawer</title>
+<meta name="description" content="How a city or agency can use free LightDrawer receipts to show that each electronic bid opened is the exact file the bidder sent. Step-by-step setup, sample bid-notice wording, and honest limits.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Example: sealed bids for public contracts — LightDrawer">
+<meta property="og:description" content="Show that each bid opened is the exact file the bidder sent. Step-by-step setup for agencies, with honest limits.">
+<meta property="og:image" content="https://lightdrawer.org/og-image.png">
+<meta property="og:url" content="https://lightdrawer.org/examples/sealed-bids">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#setup">Skip to the setup steps</a>
+<header class="top">
+  <a class="brand" href="/" aria-label="LightDrawer home">
+    <svg class="logo-mark" viewBox="0 0 128 128" width="36" height="36" aria-hidden="true"><defs><radialGradient id="ldGlow" cx="64" cy="64" r="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFF1B8"/><stop offset="1" stop-color="#FFF1B8" stop-opacity="0"/></radialGradient></defs><circle cx="64" cy="64" r="22" fill="url(#ldGlow)" opacity=".55"/><g fill="none" stroke-linecap="round" stroke-width="7"><path d="M56 118 H40 A30 30 0 0 1 10 88 V40 A30 30 0 0 1 40 10 H88 A30 30 0 0 1 118 40 V88 A30 30 0 0 1 88 118 H72" stroke="currentColor"/><path d="M56 102 H46 A20 20 0 0 1 26 82 V46 A20 20 0 0 1 46 26 H82 A20 20 0 0 1 102 46 V82 A20 20 0 0 1 82 102 H72" stroke="currentColor"/><path d="M56 86 H52 A10 10 0 0 1 42 76 V52 A10 10 0 0 1 52 42 H76 A10 10 0 0 1 86 52 V76 A10 10 0 0 1 76 86 H72" stroke="#C9A227"/></g><circle cx="64" cy="64" r="11" fill="none" stroke="#C9A227" stroke-width="4"/><path d="M64 57 V64 L69 68" fill="none" stroke="#C9A227" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M64 86 V122" stroke="#C9A227" stroke-width="5" stroke-linecap="round"/></svg>
+    <span class="wordmark"><span class="light">Light</span><span class="drawer">Drawer</span></span>
+  </a>
+  <nav aria-label="Primary">
+    <a href="/">Make a receipt</a>
+    <a href="/verify.html">Check a receipt</a>
+    <a href="/button">Add a button</a>
+  </nav>
+</header>
+
+<main class="docs example-page">
+<section class="hero docs-hero">
+  <h1>Example: sealed bids for public contracts</h1>
+  <p class="promise">At a bid opening, everyone wants to know the same thing: is this the exact file the bidder sent, unchanged? LightDrawer gives each bid a short trail of fingerprints that anyone can check.</p>
+  <p class="privacy">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <span><strong>Bids are never uploaded.</strong> Only a fingerprint leaves the computer. It is free, and nobody needs an account.</span>
+  </p>
+</section>
+
+<section>
+  <p>A <strong>fingerprint</strong> is a short code calculated from a file. Change even one character in the file and the fingerprint changes completely. A LightDrawer <strong>receipt</strong> records a fingerprint with independent time witnesses, so anyone can check later that a file with that fingerprint existed by that time.</p>
+
+  <h2>The idea</h2>
+  <p>The same bid file is fingerprinted at three handoffs:</p>
+  <ol>
+    <li><strong>The bidder stamps it</strong> before attaching it. This shows that exact file existed by that time.</li>
+    <li><strong>The agency stamps it on arrival</strong> and checks that the fingerprint matches the bidder’s receipt. A mismatch is caught right away, while there is still time to resend.</li>
+    <li><strong>The agency checks it again at the public opening</strong>, after the bid has been in storage. Anyone in the room, or anyone later, can check it too, even offline.</li>
+  </ol>
+  <p>If all three fingerprints match, the file did not change between the bidder and the opening. If one does not match, you know exactly which handoff it changed at.</p>
+</section>
+
+<section aria-labelledby="limits">
+  <h2 id="limits">What this does and does not prove</h2>
+  <p>Please read this part before you put it in a bid notice.</p>
+  <h3>It does show</h3>
+  <ul>
+    <li>that a file with this exact fingerprint existed no later than each stamped time, and</li>
+    <li>that the file opened at the bid opening is the same file, byte for byte, as the one the bidder stamped and the one the agency received.</li>
+  </ul>
+  <h3>It does not show</h3>
+  <ul>
+    <li><strong>Who sent the file.</strong> A receipt says nothing about identity. Keep using your usual way of confirming the bidder, such as a signed bid form, or a digital signature if your rules call for one.</li>
+    <li><strong>That nobody opened the bid early.</strong> A fingerprint does not hide or lock a file. Keeping bids sealed until the opening still needs restricted storage, encryption, or a sealed-upload system.</li>
+    <li><strong>That the bid arrived before the deadline.</strong> The bidder’s stamp shows the file existed by a certain time, not that it was delivered by then. Email timestamps come from mail servers, not from independent witnesses. The agency’s own arrival stamp adds an independent record that you had the file by then.</li>
+    <li><strong>That anything in the bid is true, complete, or meets your requirements.</strong></li>
+  </ul>
+  <p>LightDrawer is an extra integrity record. It is not a certification, and it does not make a process legally compliant. Check your procurement rules and with your attorney before you require it.</p>
+</section>
+
+<section id="setup" aria-labelledby="setup-title">
+  <h2 id="setup-title">Setting it up: step by step for the agency</h2>
+
+  <h3>Before you advertise</h3>
+  <ol>
+    <li><strong>Pick who handles intake.</strong> Name one person, and a backup, who receives bids, stamps them on arrival, and keeps the log. If you can, keep this separate from the people who evaluate bids.</li>
+    <li><strong>Pick where bids are stored until the opening.</strong> Use a folder or drive only intake staff can open. Many agencies also keep a second copy on a USB drive, locked up with the paper bids.</li>
+    <li><strong>Make an arrival log.</strong> A simple spreadsheet is enough. Suggested columns: bidder name, file name, time received (from your email or upload system), fingerprint on the bidder’s receipt, fingerprint you got on arrival, match (yes or no), who checked it, and a note.</li>
+    <li><strong>Add the bidder instructions to the bid notice.</strong> <a href="#sample-notice">Sample wording</a> is below.</li>
+    <li><strong>Do a practice run.</strong> Have a staff member send a test bid through the same email or upload path, then stamp and check it. Some email security systems rewrite or “clean” attachments, which changes the fingerprint. It is much better to find that out before the deadline.</li>
+  </ol>
+
+  <h3>When a bid arrives</h3>
+  <ol>
+    <li><strong>Save the attachment exactly as received.</strong> Do not open it in an editor, re-save it, print it to PDF, rename the extension, or unzip it first. Just save it to the intake folder.</li>
+    <li><strong>Stamp it.</strong> Drop the saved file onto <a href="/">LightDrawer</a> and download the receipt. The file stays on your computer; only the fingerprint is sent.</li>
+    <li><strong>Compare fingerprints.</strong> The fingerprint is shown on screen. Compare it with the one on the bidder’s receipt, or the one they typed in their email. You can also check the bidder’s receipt directly: open <a href="/verify.html">Check a receipt</a>, then drop in their receipt and the file you received.</li>
+    <li><strong>Log it.</strong> Fill in the arrival log row.</li>
+    <li><strong>If it matches,</strong> reply to confirm receipt. You can include the fingerprint you recorded so the bidder can see it matches theirs.</li>
+    <li><strong>If it does not match,</strong> contact the bidder right away. See <a href="#mismatch">If something does not match</a>.</li>
+    <li><strong>Store it.</strong> Put the bid file, the bidder’s receipt, and your arrival receipt together in the restricted folder. A simple name works, for example <code>Bid-2027-04 / Acme Paving /</code>.</li>
+  </ol>
+
+  <h3>Before the opening</h3>
+  <ol>
+    <li><strong>Copy everything to the opening drive.</strong> For each bid, include the bid file, the bidder’s receipt, and your arrival receipt. Also include the arrival log and a copy of the checker page, <a href="/verify.html">verify.html</a>. Every receipt also has its own checker inside.</li>
+    <li><strong>Keep the drive with the sealed bids</strong> until the opening.</li>
+  </ol>
+
+  <h3>At the public opening</h3>
+  <ol>
+    <li><strong>Check each bid against its receipts.</strong> Open <code>verify.html</code> from the drive. It works without the internet. Drop in the bid file and the bidder’s receipt, then the bid file and your arrival receipt. Each one should show a match.</li>
+    <li><strong>If you like, stamp each file again</strong> to add a record of when it was opened.</li>
+    <li><strong>Read the result aloud</strong> for each bid, or show it on screen, and note it in the minutes.</li>
+    <li><strong>Make the drive, or a copy of it, available</strong> to anyone who wants to check for themselves. The checker does not need this website or an account, and nobody has to trust the agency.</li>
+  </ol>
+</section>
+
+<section aria-labelledby="mismatch">
+  <h2 id="mismatch">If something does not match</h2>
+  <p>A mismatch tells you where the change happened.</p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th scope="col">Bidder’s receipt vs. arrival</th><th scope="col">Arrival vs. opening</th><th scope="col">What it means</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Match</td><td>Match</td><td>The file did not change.</td></tr>
+      <tr><td><strong>No match</strong></td><td>—</td><td>The file changed in transit, or the bidder stamped a different version. Common causes: the wrong version was attached, the file was zipped or renamed, or an email system altered the attachment.</td></tr>
+      <tr><td>Match</td><td><strong>No match</strong></td><td>The file changed while the agency had it. Look at storage, copies, and who had access.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><strong>On arrival:</strong> tell the bidder right away and ask them to resend, or to stamp the exact file they are sending. Log every attempt. Do not edit or “fix” the file yourself.</li>
+    <li><strong>At the opening:</strong> do not overwrite anything. Set the file aside, record the mismatch in the minutes, and follow your bid-protest or irregularity procedures. Your other copies, such as the email server and the USB backup, and their fingerprints will usually show which copy is the original.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="sample-notice">
+  <h2 id="sample-notice">Sample instruction for the bid notice</h2>
+  <p>Edit this to fit your process.</p>
+  <blockquote class="sample">
+    <p><strong>Bid file integrity receipt (requested)</strong></p>
+    <p>Before you send your bid, make a free integrity receipt for the exact file you will submit:</p>
+    <ol>
+      <li>Finish your bid file. Do not change it after this step.</li>
+      <li>Go to https://lightdrawer.org and drop the file in. The file stays on your computer; only a fingerprint is recorded. No account is needed.</li>
+      <li>Download the receipt.</li>
+      <li>Send the same, unchanged file with your bid. Attach the receipt ZIP too, or paste the fingerprint into your email.</li>
+    </ol>
+    <p>If you send several files, make a receipt for each file exactly as you attach it. If you zip the files, make the receipt for the ZIP.</p>
+    <p>Do not put prices or other confidential details in the receipt’s optional note. Leave the optional public transparency-log box unchecked.</p>
+    <p>The agency will make its own receipt when your bid arrives and will tell you right away if the fingerprints do not match, so you can resend before the deadline. The receipt helps show your file was not changed. It does not replace any signature, form, or delivery requirement in this notice.</p>
+  </blockquote>
+</section>
+
+<section class="faq" aria-labelledby="bids-faq">
+  <h2 id="bids-faq">Good to know</h2>
+  <details open>
+    <summary>Does the bid stay private?</summary>
+    <p>Yes. Only the fingerprint leaves the computer, and a file cannot be rebuilt from its fingerprint. Keeping bids sealed until the opening is still up to your storage and access rules.</p>
+  </details>
+  <details>
+    <summary>How quickly is a receipt complete?</summary>
+    <p>The timestamp authority’s record is available right away. The Bitcoin and certificate-log records finish over the next few hours. All of them end up in the receipt.</p>
+  </details>
+  <details>
+    <summary>Can we check a fingerprint without LightDrawer?</summary>
+    <p>Yes. The fingerprint is a standard SHA-256 hash. On Windows, run <code>certutil -hashfile bid.pdf SHA256</code>. On Mac or Linux, run <code>shasum -a 256 bid.pdf</code>. The result should match the fingerprint on the receipt.</p>
+  </details>
+  <details>
+    <summary>What if LightDrawer disappears?</summary>
+    <p>Receipts still work. The checker is in every receipt, and the time records live on independent public systems that do not depend on us.</p>
+  </details>
+</section>
+</main>
+
+<footer>No accounts. No file storage. Only fingerprints are sent to independent witnesses. <a href="https://paypal.me/josephball" rel="noopener">Support LightDrawer</a>.</footer>
+</body>
+</html>

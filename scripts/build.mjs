@@ -49,6 +49,13 @@ if (existsSync(join(root, 'web/ui/index.html'))) {
     const src = join(root, 'web/ui', f);
     if (existsSync(src)) copyFileSync(src, join(root, 'public', f));
   }
+  const examplesDir = join(root, 'web/ui/examples');
+  if (existsSync(examplesDir)) {
+    mkdirSync(join(root, 'public/examples'), { recursive: true });
+    for (const f of readdirSync(examplesDir).filter((n) => n.endsWith('.html'))) {
+      copyFileSync(join(examplesDir, f), join(root, 'public/examples', f));
+    }
+  }
   const stampHelper = join(root, 'web/snippets/lightdrawer-stamp.js');
   if (existsSync(stampHelper)) copyFileSync(stampHelper, join(root, 'public/lightdrawer-stamp.js'));
   const securityTxt = join(root, 'web/ui/.well-known/security.txt');
