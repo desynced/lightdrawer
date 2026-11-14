@@ -10,6 +10,12 @@ Version numbers follow [Semantic Versioning](https://semver.org): new features r
 
 ### Added
 - A plain-language example page at `/examples/sealed-bids`: how a city or agency can use receipts to show that each bid opened is the exact file the bidder sent, with step-by-step intake setup, a mismatch guide, sample bid-notice wording, and clear limits. The homepage's "Why would I use this?" section links to it.
+- Eight more plain-language, step-by-step guides under `/examples/`, built the same way as the sealed-bids page: `you-made-it-first`, `repair-or-move-out`, `agreed-version`, `journalists`, `photographers`, `small-businesses`, `artists`, and `insurance-records`. Each one has setup steps, what a receipt does and does not prove, what to do if a file does not match, and sample wording. They are static pages with no scripts.
+- An examples index at `/examples/` with a one-line description and link for every guide, including sealed bids. Every card under "Why would I use this?" and "Who it is for" on the homepage now links to its guide, and the homepage links the index.
+- `test/example-pages.mjs` now checks every example page and the index: no scripts or inline handlers or styles, the "does and does not prove" section, no certification, compliance, or guarantee wording except in sentences that say LightDrawer is not that, an exact `og:url` (parsed as a URL), no broken site links, every homepage card links an existing guide, the index links every guide, and `/examples` is served by the static asset server.
+
+### Fixed
+- The sealed-bids page listed "the file was zipped or renamed" as a cause of a fingerprint mismatch. Renaming a file does not change its fingerprint. It now says the file was zipped, converted, or re-saved, and notes that renaming does not change the fingerprint.
 
 ## [1.6.4] - 2026-11-13
 

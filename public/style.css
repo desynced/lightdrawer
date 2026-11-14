@@ -173,3 +173,4 @@ footer{margin-top:3rem;color:var(--muted);font-size:.9rem;border-top:1px solid v
 .example-page th{background:var(--surface)}
 .example-page blockquote.sample{margin:.8rem 0;padding:1rem 1.2rem;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px}
 .example-page blockquote.sample p:first-child{margin-top:0}
+.more-examples{margin:1rem 0 0}
