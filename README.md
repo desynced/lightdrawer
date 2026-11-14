@@ -133,6 +133,8 @@ The committed `wrangler.jsonc` is a template with placeholders (empty Turnstile 
 6. Add a WAF rate-limiting rule on `/api/*` (e.g. 20 req / 10 s per IP for `/api/stamp`) before going public, if your Cloudflare plan allows it. Be a good neighbour to free calendars and FreeTSA.
 7. `wrangler deploy` (or `wrangler deploy -c wrangler.production.jsonc` if you keep production IDs in that private file).
 
+To remove a self-hosted copy, run `npx wrangler delete` (add `-c wrangler.production.jsonc` if you deploy with that file). That deletes the Worker and its secrets. The D1 database is separate: delete it with `npx wrangler d1 delete <your-database-name>` if you no longer need its records. Remove the Turnstile widget and any custom-domain route in the Cloudflare dashboard.
+
 ### What runs where
 
 | Piece | Where it runs | Notes |
@@ -334,11 +336,15 @@ The same provenance file covers the other release files. Pass that filename inst
 
 LightDrawer is a public repository. The usual way to propose a change is a pull request against `main`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+- [GOVERNANCE.md](GOVERNANCE.md): who maintains LightDrawer, who decides what, and the roles.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): Contributor Covenant 2.1. Reports go to security@lightdrawer.org.
+- [ROADMAP.md](ROADMAP.md): what we intend to work on next, and what we don't intend to do.
+
 ## Security
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md). There is no bounty.
 
-[How we keep LightDrawer trustworthy](docs/TRUST.md) lists the controls that are actually in place, and how to check them.
+[How we keep LightDrawer trustworthy](docs/TRUST.md) lists the controls that are actually in place, and how to check them. The [security assurance case](docs/ASSURANCE.md) explains the threat model, the trust boundaries, and how common weaknesses are countered.
 
 ## Support
 
