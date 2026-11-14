@@ -1,5 +1,6 @@
 /* OpenTimestamps: build, parse, serialize, upgrade, and check .ots proofs.
    Format reference: python-opentimestamps (core/serialize.py, timestamp.py, op.py). */
+/* exported OTS_DEFAULT_CALENDARS, otsEsploraLookup */ // used by the offline verifier (web/ui/verify-ui.js) and the tests, not by every bundle
 const OTS_MAGIC = Uint8Array.from([0x00, 0x4f, 0x70, 0x65, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x73, 0x00, 0x00, 0x50, 0x72, 0x6f, 0x6f, 0x66, 0x00, 0xbf, 0x89, 0xe2, 0xe8, 0x84, 0xe8, 0x92, 0x94]);
 const OTS_PENDING = '83dfe30d2ef90c8e', OTS_BITCOIN = '0588960d73d71901', OTS_LITECOIN = '06869a0d73d71b45', OTS_ETHEREUM = '30fe8087b5c7ead7';
 const OTS_OPS = { 0x08: 'sha256', 0x02: 'sha1', 0x03: 'ripemd160', 0x67: 'keccak256', 0xf0: 'append', 0xf1: 'prepend', 0xf2: 'reverse', 0xf3: 'hexlify' };
@@ -136,7 +137,7 @@ async function otsEsploraLookup(height, fetchFn = fetch) {
       if (!/^[0-9a-f]{64}$/.test(h)) continue;
       const j = await (await fetchFn(`${base}/block/${h}`)).json();
       results.push({ merkleRootHex: j.merkle_root, time: j.timestamp, source: new URL(base).hostname });
-    } catch (e) { /* next */ }
+    } catch (_e) { /* next */ }
   }
   if (!results.length) throw new Error('no block explorer reachable');
   if (results.length > 1 && results[0].merkleRootHex !== results[1].merkleRootHex) throw new Error('explorers disagree');

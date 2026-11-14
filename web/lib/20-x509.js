@@ -10,7 +10,9 @@ function x509Parse(der) {
   const [tbs, sigAlg, sigVal] = cert.children;
   let i = 0; const t = tbs.children;
   if (t[0].tag === 0xa0) i++; // version
-  const serial = t[i++], tbsSigAlg = t[i++], issuer = t[i++], validity = t[i++], subject = t[i++], spki = t[i++];
+  const serial = t[i++];
+  i++; // tbsCertificate signature AlgorithmIdentifier: not needed, the outer sigAlg is what gets checked
+  const issuer = t[i++], validity = t[i++], subject = t[i++], spki = t[i];
   const spkiAlg = spki.children[0];
   return {
     der, tbsRaw: tbs.raw, serialHex: toHex(serial.content), sigAlgOid: derOid(sigAlg.children[0]), sigValue: sigVal.content.subarray(1),

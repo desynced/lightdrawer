@@ -66,7 +66,7 @@ async function rekorVerify(entryJson, statementBytes, trust) {
         for (const line of sigs.trim().split('\n')) {
           const m = /^\u2014 (\S+) (\S+)$/.exec(line); if (!m) continue;
           const raw = fromB64(m[2]);
-          try { sigOk = sigOk || await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(raw.subarray(4), 32), utf8(text + '\n')); } catch (err) { /* */ }
+          try { sigOk = sigOk || await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(raw.subarray(4), 32), utf8(text + '\n')); } catch (_err) { /* */ }
         }
         checks.push(chk('rekor.checkpoint', cpOk && sigOk ? 'pass' : 'fail', 'Log checkpoint is signed by Rekor and matches the proof', lines[0]));
       }

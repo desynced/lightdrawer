@@ -8,6 +8,7 @@
    Hex matches the fingerprints already shown in the UI, each label is well under
    the 63-character DNS limit, and anyone can split a SHA-256 in half and read
    the name. Full FQDN is 87 characters, under the 253-character DNS limit. */
+/* exported ctNewState, ctSubmit, ctCloseDueSubBatches, ctPlanAnchor, ctRecordIssuance, ctUpgradeFromState */ // used by scripts/ct-anchor.mjs and the tests through build/core.js, not by every bundle
 const CT_DEFAULTS = {
   subBatchMs: 15 * 60 * 1000,
   anchorEveryMs: 6 * 60 * 60 * 1000,
@@ -262,7 +263,7 @@ function ctParseSct(raw) {
 function ctParseSctList(bytes) {
   if (!bytes || bytes.length < 2) return [];
   let list = bytes;
-  if (list[0] === 0x04) { try { list = derParse(list).content; } catch (e) { /* not DER-wrapped */ } }
+  if (list[0] === 0x04) { try { list = derParse(list).content; } catch (_e) { /* not DER-wrapped */ } }
   if (list.length < 2) return [];
   const listLen = ctReadU16(list, 0);
   let off = 2, end = 2 + listLen;
@@ -289,7 +290,7 @@ function ctSctSignedData(sct, entryType, signedEntry) {
 }
 function ctLogIdHex(log) {
   if (log && log.log_id) {
-    try { return toHex(fromB64(log.log_id)); } catch (e) { return ''; }
+    try { return toHex(fromB64(log.log_id)); } catch (_e) { return ''; }
   }
   return '';
 }
@@ -337,18 +338,18 @@ async function ctVerifySctSignature(sct, signedData, log) {
   if (!log || !log.key) return false;
   const spki = fromB64(log.key);
   let parsed;
-  try { parsed = { spkiRaw: spki, keyAlgOid: OID.ecPublicKey, curveOid: OID.p256 }; } catch (e) { return false; }
+  try { parsed = { spkiRaw: spki, keyAlgOid: OID.ecPublicKey, curveOid: OID.p256 }; } catch (_e) { return false; }
   try {
     const inner = derParse(spki);
     const alg = inner.children[0];
     parsed.keyAlgOid = derOid(alg.children[0]);
     parsed.curveOid = alg.children[1] && alg.children[1].tag === 0x06 ? derOid(alg.children[1]) : OID.p256;
     parsed.spkiRaw = spki;
-  } catch (e) { /* use defaults */ }
+  } catch (_e) { /* use defaults */ }
   const sigAlg = sct.sigAlg === 1 ? OID.sha256WithRSA : OID.ecdsaSha256;
   try {
     return await verifyWithSpki(parsed.spkiRaw, parsed.keyAlgOid, parsed.curveOid, sigAlg, 'SHA-256', sct.signature, signedData);
-  } catch (e) { return false; }
+  } catch (_e) { return false; }
 }
 
 function ctSplitPems(pemText) {
@@ -372,7 +373,7 @@ async function ctVerifyChain(certs, trust) {
       if (bytesEq(last.spkiRaw, root.spkiRaw) || (await x509VerifyIssuedBy(last, root)) || bytesEq(last.der, root.der)) {
         return { ok: true, detail: root.subject || 'pinned root' };
       }
-    } catch (e) { /* try next */ }
+    } catch (_e) { /* try next */ }
     if (bytesEq(last.subjectRaw, root.subjectRaw) && bytesEq(last.spkiRaw, root.spkiRaw)) return { ok: true, detail: root.subject || 'pinned root' };
   }
   if (certs.length === 1 && extraTest.some((r) => bytesEq(r.der, certs[0].der))) return { ok: true, detail: 'test root (self-signed fixture)' };
@@ -430,7 +431,7 @@ async function ctVerify(entry, statementDigestHex, trust) {
     if (embedded) { try { scts = ctParseSctList(embedded); } catch (e) { checks.push(chk('ct.sct.parse', 'warn', 'Could not parse SCTs embedded in the certificate', e.message)); } }
     if (!scts.length && entry.scts && entry.scts.length) {
       for (const s of entry.scts) {
-        if (s.raw_b64) { try { scts.push(ctParseSct(fromB64(s.raw_b64))); } catch (e) { /* skip */ } }
+        if (s.raw_b64) { try { scts.push(ctParseSct(fromB64(s.raw_b64))); } catch (_e) { /* skip */ } }
       }
     }
     if (!scts.length) {

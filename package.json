@@ -9,7 +9,7 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/build.mjs && node test/run.mjs",
     "test:live": "node scripts/build.mjs && node test/run.mjs --live",
-    "lint": "eslint src scripts test",
+    "lint": "node scripts/build.mjs && eslint --max-warnings=0 src scripts test public/app.js build/verify.js web/ui/button.js web/snippets/lightdrawer-stamp.js",
     "dev": "node scripts/build.mjs && wrangler dev",
     "check": "node scripts/build.mjs && wrangler deploy --dry-run --outdir build/dry-run"
   },

@@ -211,7 +211,9 @@ function x509Parse(der) {
   const [tbs, sigAlg, sigVal] = cert.children;
   let i = 0; const t = tbs.children;
   if (t[0].tag === 0xa0) i++; // version
-  const serial = t[i++], tbsSigAlg = t[i++], issuer = t[i++], validity = t[i++], subject = t[i++], spki = t[i++];
+  const serial = t[i++];
+  i++; // tbsCertificate signature AlgorithmIdentifier: not needed, the outer sigAlg is what gets checked
+  const issuer = t[i++], validity = t[i++], subject = t[i++], spki = t[i];
   const spkiAlg = spki.children[0];
   return {
     der, tbsRaw: tbs.raw, serialHex: toHex(serial.content), sigAlgOid: derOid(sigAlg.children[0]), sigValue: sigVal.content.subarray(1),
@@ -298,7 +300,8 @@ function tsaParseResponse(tsr) {
   const ci = resp.children[1];
   if (derOid(ci.children[0]) !== OID.signedData) throw new Error('token is not CMS SignedData');
   const sd = ci.children[1].children[0];
-  let k = 1; const digestAlgs = sd.children[k++]; const encap = sd.children[k++];
+  let k = 2; // [0] version, [1] digestAlgorithms (not needed here)
+  const encap = sd.children[k++];
   let certs = [];
   if (sd.children[k] && sd.children[k].tag === 0xa0) { certs = sd.children[k].children.map((c) => c.raw); k++; }
   if (sd.children[k] && sd.children[k].tag === 0xa1) k++;
@@ -317,13 +320,13 @@ function tsaParseResponse(tsr) {
   for (; j < tst.length; j++) {
     const n = tst[j];
     if (n.tag === 0x02) nonce = derInt(n);
-    else if (n.tag === 0xa0) { try { tsaName = x509Name(n.children[0].children[0]); } catch (e) { /* ignore */ } }
+    else if (n.tag === 0xa0) { try { tsaName = x509Name(n.children[0].children[0]); } catch (_e) { /* ignore */ } }
   }
   const si = signerInfos.children[0].children;
   let s = 1; const sid = si[s++]; const digestAlgOid = derOid(si[s++].children[0]);
   let signedAttrs = null; if (si[s].tag === 0xa0) signedAttrs = si[s++];
   const sigAlgOid = derOid(si[s++].children[0]);
-  const signature = si[s++].content;
+  const signature = si[s].content;
   const attrs = {};
   if (signedAttrs) for (const a of signedAttrs.children) attrs[derOid(a.children[0])] = a.children[1].children[0];
   let sidSerialHex = null; if (sid.tag === 0x30) sidSerialHex = toHex(sid.children[1].content).replace(/^00/, '');
@@ -353,7 +356,7 @@ async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
   let signer = null;
   for (const c of candidates) {
     if (bytesEq(c.der, root.der)) continue;
-    try { if (await verifyWithSpki(c.spkiRaw, c.keyAlgOid, c.curveOid, p.sigAlgOid, hashName, p.signature, signedAttrsDer)) { signer = c; break; } } catch (e) { /* try next */ }
+    try { if (await verifyWithSpki(c.spkiRaw, c.keyAlgOid, c.curveOid, p.sigAlgOid, hashName, p.signature, signedAttrsDer)) { signer = c; break; } } catch (_e) { /* try next */ }
   }
   checks.push(chk('tsa.signature', signer ? 'pass' : 'fail', 'TSA signature is valid', signer ? signer.subject : 'no certificate verified the signature'));
   if (signer) {
@@ -367,7 +370,7 @@ async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
         checks.push(chk('tsa.ess', bytesEq(hashNode.content, await digest(alg, signer.der)) ? 'pass' : 'fail', 'Signed attributes name this signing certificate', ''));
       } catch (e) { checks.push(chk('tsa.ess', 'warn', 'Signing-certificate attribute unreadable', e.message)); }
     }
-    let chainOk = false; try { chainOk = await x509VerifyIssuedBy(signer, root); } catch (e) { /* */ }
+    let chainOk = false; try { chainOk = await x509VerifyIssuedBy(signer, root); } catch (_e) { /* */ }
     checks.push(chk('tsa.chain', chainOk ? 'pass' : 'fail', 'TSA certificate chains to the pinned root', root.subject));
     const inValidity = p.genTime >= signer.notBefore && p.genTime <= signer.notAfter;
     checks.push(chk('tsa.validity', inValidity ? 'pass' : 'fail', 'Timestamp falls inside the TSA certificate validity', `${signer.notBefore.toISOString()} – ${signer.notAfter.toISOString()}`));
@@ -380,6 +383,7 @@ async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
 /* ---- 40-ots.js ---- */
 /* OpenTimestamps: build, parse, serialize, upgrade, and check .ots proofs.
    Format reference: python-opentimestamps (core/serialize.py, timestamp.py, op.py). */
+/* exported OTS_DEFAULT_CALENDARS, otsEsploraLookup */ // used by the offline verifier (web/ui/verify-ui.js) and the tests, not by every bundle
 const OTS_MAGIC = Uint8Array.from([0x00, 0x4f, 0x70, 0x65, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x73, 0x00, 0x00, 0x50, 0x72, 0x6f, 0x6f, 0x66, 0x00, 0xbf, 0x89, 0xe2, 0xe8, 0x84, 0xe8, 0x92, 0x94]);
 const OTS_PENDING = '83dfe30d2ef90c8e', OTS_BITCOIN = '0588960d73d71901', OTS_LITECOIN = '06869a0d73d71b45', OTS_ETHEREUM = '30fe8087b5c7ead7';
 const OTS_OPS = { 0x08: 'sha256', 0x02: 'sha1', 0x03: 'ripemd160', 0x67: 'keccak256', 0xf0: 'append', 0xf1: 'prepend', 0xf2: 'reverse', 0xf3: 'hexlify' };
@@ -516,7 +520,7 @@ async function otsEsploraLookup(height, fetchFn = fetch) {
       if (!/^[0-9a-f]{64}$/.test(h)) continue;
       const j = await (await fetchFn(`${base}/block/${h}`)).json();
       results.push({ merkleRootHex: j.merkle_root, time: j.timestamp, source: new URL(base).hostname });
-    } catch (e) { /* next */ }
+    } catch (_e) { /* next */ }
   }
   if (!results.length) throw new Error('no block explorer reachable');
   if (results.length > 1 && results[0].merkleRootHex !== results[1].merkleRootHex) throw new Error('explorers disagree');
@@ -726,7 +730,7 @@ async function rekorVerify(entryJson, statementBytes, trust) {
         for (const line of sigs.trim().split('\n')) {
           const m = /^\u2014 (\S+) (\S+)$/.exec(line); if (!m) continue;
           const raw = fromB64(m[2]);
-          try { sigOk = sigOk || await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(raw.subarray(4), 32), utf8(text + '\n')); } catch (err) { /* */ }
+          try { sigOk = sigOk || await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, rk, ecdsaDerToRaw(raw.subarray(4), 32), utf8(text + '\n')); } catch (_err) { /* */ }
         }
         checks.push(chk('rekor.checkpoint', cpOk && sigOk ? 'pass' : 'fail', 'Log checkpoint is signed by Rekor and matches the proof', lines[0]));
       }
@@ -748,6 +752,7 @@ async function rekorVerify(entryJson, statementBytes, trust) {
    Hex matches the fingerprints already shown in the UI, each label is well under
    the 63-character DNS limit, and anyone can split a SHA-256 in half and read
    the name. Full FQDN is 87 characters, under the 253-character DNS limit. */
+/* exported ctNewState, ctSubmit, ctCloseDueSubBatches, ctPlanAnchor, ctRecordIssuance, ctUpgradeFromState */ // used by scripts/ct-anchor.mjs and the tests through build/core.js, not by every bundle
 const CT_DEFAULTS = {
   subBatchMs: 15 * 60 * 1000,
   anchorEveryMs: 6 * 60 * 60 * 1000,
@@ -1002,7 +1007,7 @@ function ctParseSct(raw) {
 function ctParseSctList(bytes) {
   if (!bytes || bytes.length < 2) return [];
   let list = bytes;
-  if (list[0] === 0x04) { try { list = derParse(list).content; } catch (e) { /* not DER-wrapped */ } }
+  if (list[0] === 0x04) { try { list = derParse(list).content; } catch (_e) { /* not DER-wrapped */ } }
   if (list.length < 2) return [];
   const listLen = ctReadU16(list, 0);
   let off = 2, end = 2 + listLen;
@@ -1029,7 +1034,7 @@ function ctSctSignedData(sct, entryType, signedEntry) {
 }
 function ctLogIdHex(log) {
   if (log && log.log_id) {
-    try { return toHex(fromB64(log.log_id)); } catch (e) { return ''; }
+    try { return toHex(fromB64(log.log_id)); } catch (_e) { return ''; }
   }
   return '';
 }
@@ -1077,18 +1082,18 @@ async function ctVerifySctSignature(sct, signedData, log) {
   if (!log || !log.key) return false;
   const spki = fromB64(log.key);
   let parsed;
-  try { parsed = { spkiRaw: spki, keyAlgOid: OID.ecPublicKey, curveOid: OID.p256 }; } catch (e) { return false; }
+  try { parsed = { spkiRaw: spki, keyAlgOid: OID.ecPublicKey, curveOid: OID.p256 }; } catch (_e) { return false; }
   try {
     const inner = derParse(spki);
     const alg = inner.children[0];
     parsed.keyAlgOid = derOid(alg.children[0]);
     parsed.curveOid = alg.children[1] && alg.children[1].tag === 0x06 ? derOid(alg.children[1]) : OID.p256;
     parsed.spkiRaw = spki;
-  } catch (e) { /* use defaults */ }
+  } catch (_e) { /* use defaults */ }
   const sigAlg = sct.sigAlg === 1 ? OID.sha256WithRSA : OID.ecdsaSha256;
   try {
     return await verifyWithSpki(parsed.spkiRaw, parsed.keyAlgOid, parsed.curveOid, sigAlg, 'SHA-256', sct.signature, signedData);
-  } catch (e) { return false; }
+  } catch (_e) { return false; }
 }
 
 function ctSplitPems(pemText) {
@@ -1112,7 +1117,7 @@ async function ctVerifyChain(certs, trust) {
       if (bytesEq(last.spkiRaw, root.spkiRaw) || (await x509VerifyIssuedBy(last, root)) || bytesEq(last.der, root.der)) {
         return { ok: true, detail: root.subject || 'pinned root' };
       }
-    } catch (e) { /* try next */ }
+    } catch (_e) { /* try next */ }
     if (bytesEq(last.subjectRaw, root.subjectRaw) && bytesEq(last.spkiRaw, root.spkiRaw)) return { ok: true, detail: root.subject || 'pinned root' };
   }
   if (certs.length === 1 && extraTest.some((r) => bytesEq(r.der, certs[0].der))) return { ok: true, detail: 'test root (self-signed fixture)' };
@@ -1170,7 +1175,7 @@ async function ctVerify(entry, statementDigestHex, trust) {
     if (embedded) { try { scts = ctParseSctList(embedded); } catch (e) { checks.push(chk('ct.sct.parse', 'warn', 'Could not parse SCTs embedded in the certificate', e.message)); } }
     if (!scts.length && entry.scts && entry.scts.length) {
       for (const s of entry.scts) {
-        if (s.raw_b64) { try { scts.push(ctParseSct(fromB64(s.raw_b64))); } catch (e) { /* skip */ } }
+        if (s.raw_b64) { try { scts.push(ctParseSct(fromB64(s.raw_b64))); } catch (_e) { /* skip */ } }
       }
     }
     if (!scts.length) {
@@ -1213,6 +1218,7 @@ async function ctVerify(entry, statementDigestHex, trust) {
 
 /* ---- 60-zip.js ---- */
 /* Tiny ZIP writer (stored) and reader (stored + deflate). */
+/* exported zipRead */ // used by the offline verifier (web/ui/verify-ui.js), not by every bundle
 const _crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = _crcTable[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 function zipWrite(entries, when = new Date()) {
@@ -1413,6 +1419,7 @@ async function c2paInspectSource(source) {
 /* Receipt = one ZIP per file: statement.json (what is stamped), proofs, cover page,
    trust anchors, and a copy of the offline verifier. Hash-only: the original file is
    never put in the receipt and never leaves the browser. */
+/* exported makeReceipt, verifyReceipt */ // used by the receipt maker (web/ui/maker.js) and the offline verifier (web/ui/verify-ui.js), not by every bundle
 const PROVENANCE_FIELDS = [
   ['source_url', 'Source URL', 'Where you found it online, if anywhere.'],
   ['source_archive_url', 'Archived copy URL', 'A perma.cc, Wayback, or Arweave link you made, if any.'],
@@ -1508,7 +1515,7 @@ async function verifyReceipt(files, original, opts = {}) {
   sec('File and statement', rc);
   // RFC 3161
   if (files['proofs/statement.json.tsr']) {
-    let nonce = null; try { nonce = JSON.parse(utf8dec(files['receipt.json'])).proofs.rfc3161.nonce; } catch (e) { /* optional */ }
+    let nonce = null; try { nonce = JSON.parse(utf8dec(files['receipt.json'])).proofs.rfc3161.nonce; } catch (_e) { /* optional */ }
     const r = await tsaVerify(files['proofs/statement.json.tsr'], d, TRUST, nonce);
     sec('RFC 3161 timestamp (FreeTSA)', r.checks);
     if (r.genTime && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'RFC 3161 (FreeTSA)', time: r.genTime });
@@ -1537,7 +1544,7 @@ async function verifyReceipt(files, original, opts = {}) {
     let ctBytes = files['proofs/ct.json'];
     if (opts.fetchCtUpgrade) {
       try {
-        let cur; try { cur = JSON.parse(utf8dec(ctBytes)); } catch (e) { cur = null; }
+        let cur; try { cur = JSON.parse(utf8dec(ctBytes)); } catch (_e) { cur = null; }
         if (!cur || cur.status === 'pending') {
           const up = await opts.fetchCtUpgrade(toHex(d));
           if (up) {
@@ -1548,7 +1555,7 @@ async function verifyReceipt(files, original, opts = {}) {
         }
       } catch (e) { extra.push(chk('ct.upgrade', 'warn', 'Could not upgrade the certificate-log proof', e.message)); }
     }
-    let ctObj; try { ctObj = JSON.parse(utf8dec(ctBytes)); } catch (e) { ctObj = null; }
+    let ctObj; try { ctObj = JSON.parse(utf8dec(ctBytes)); } catch (_e) { ctObj = null; }
     const r = ctObj ? await ctVerify(ctObj, toHex(d), TRUST) : { checks: [chk('ct', 'fail', 'ct.json is not valid JSON', '')], times: [] };
     extra.push(...r.checks);
     sec('Certificate Transparency (public certificate log)', extra);
@@ -1556,7 +1563,7 @@ async function verifyReceipt(files, original, opts = {}) {
   } else sec('Certificate Transparency (public certificate log)', [chk('ct', 'skip', 'No certificate-log proof in this receipt', '')]);
   // Rekor
   if (files['proofs/rekor-entry.json']) {
-    let e; try { e = JSON.parse(utf8dec(files['proofs/rekor-entry.json'])); } catch (err) { e = null; }
+    let e; try { e = JSON.parse(utf8dec(files['proofs/rekor-entry.json'])); } catch (_err) { e = null; }
     const r = e ? await rekorVerify(e, stBytes, TRUST) : { checks: [chk('rekor', 'fail', 'rekor-entry.json is not valid JSON', '')] };
     sec('Sigstore Rekor transparency log', r.checks);
     if (r.time && !r.checks.some((c) => c.status === 'fail')) out.times.push({ source: 'Sigstore Rekor', time: new Date(r.time * 1000) });
@@ -1633,6 +1640,7 @@ function coverText(st, idx) {
 }
 
 /* Generated by scripts/build.mjs from trust/. Pinned trust anchors. */
+/* exported TRUST_FILES */ // used by the receipt maker and the tests, not by verify.html
 const TRUST = {
  "rootPem": "-----BEGIN CERTIFICATE-----\nMIIH/zCCBeegAwIBAgIJAMHphhYNqOmAMA0GCSqGSIb3DQEBDQUAMIGVMREwDwYD\nVQQKEwhGcmVlIFRTQTEQMA4GA1UECxMHUm9vdCBDQTEYMBYGA1UEAxMPd3d3LmZy\nZWV0c2Eub3JnMSIwIAYJKoZIhvcNAQkBFhNidXNpbGV6YXNAZ21haWwuY29tMRIw\nEAYDVQQHEwlXdWVyemJ1cmcxDzANBgNVBAgTBkJheWVybjELMAkGA1UEBhMCREUw\nHhcNMTYwMzEzMDE1MjEzWhcNNDEwMzA3MDE1MjEzWjCBlTERMA8GA1UEChMIRnJl\nZSBUU0ExEDAOBgNVBAsTB1Jvb3QgQ0ExGDAWBgNVBAMTD3d3dy5mcmVldHNhLm9y\nZzEiMCAGCSqGSIb3DQEJARYTYnVzaWxlemFzQGdtYWlsLmNvbTESMBAGA1UEBxMJ\nV3VlcnpidXJnMQ8wDQYDVQQIEwZCYXllcm4xCzAJBgNVBAYTAkRFMIICIjANBgkq\nhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAtgKODjAy8REQ2WTNqUudAnjhlCrpE6ql\nmQfNppeTmVvZrH4zutn+NwTaHAGpjSGv4/WRpZ1wZ3BRZ5mPUBZyLgq0YrIfQ5Fx\n0s/MRZPzc1r3lKWrMR9sAQx4mN4z11xFEO529L0dFJjPF9MD8Gpd2feWzGyptlel\nb+PqT+++fOa2oY0+NaMM7l/xcNHPOaMz0/2olk0i22hbKeVhvokPCqhFhzsuhKsm\nq4Of/o+t6dI7sx5h0nPMm4gGSRhfq+z6BTRgCrqQG2FOLoVFgt6iIm/BnNffUr7V\nDYd3zZmIwFOj/H3DKHoGik/xK3E82YA2ZulVOFRW/zj4ApjPa5OFbpIkd0pmzxzd\nEcL479hSA9dFiyVmSxPtY5ze1P+BE9bMU1PScpRzw8MHFXxyKqW13Qv7LWw4sbk3\nSciB7GACbQiVGzgkvXG6y85HOuvWNvC5GLSiyP9GlPB0V68tbxz4JVTRdw/Xn/XT\nFNzRBM3cq8lBOAVt/PAX5+uFcv1S9wFE8YjaBfWCP1jdBil+c4e+0tdywT2oJmYB\nBF/kEt1wmGwMmHunNEuQNzh1FtJY54hbUfiWi38mASE7xMtMhfj/C4SvapiDN837\ngYaPfs8x3KZxbX7C3YAsFnJinlwAUss1fdKar8Q/YVs7H/nU4c4Ixxxz4f67fcVq\nM2ITKentbCMCAwEAAaOCAk4wggJKMAwGA1UdEwQFMAMBAf8wDgYDVR0PAQH/BAQD\nAgHGMB0GA1UdDgQWBBT6VQ2MNGZRQ0z357OnbJWveuaklzCBygYDVR0jBIHCMIG/\ngBT6VQ2MNGZRQ0z357OnbJWveuakl6GBm6SBmDCBlTERMA8GA1UEChMIRnJlZSBU\nU0ExEDAOBgNVBAsTB1Jvb3QgQ0ExGDAWBgNVBAMTD3d3dy5mcmVldHNhLm9yZzEi\nMCAGCSqGSIb3DQEJARYTYnVzaWxlemFzQGdtYWlsLmNvbTESMBAGA1UEBxMJV3Vl\ncnpidXJnMQ8wDQYDVQQIEwZCYXllcm4xCzAJBgNVBAYTAkRFggkAwemGFg2o6YAw\nMwYDVR0fBCwwKjAooCagJIYiaHR0cDovL3d3dy5mcmVldHNhLm9yZy9yb290X2Nh\nLmNybDCBzwYDVR0gBIHHMIHEMIHBBgorBgEEAYHyJAEBMIGyMDMGCCsGAQUFBwIB\nFidodHRwOi8vd3d3LmZyZWV0c2Eub3JnL2ZyZWV0c2FfY3BzLmh0bWwwMgYIKwYB\nBQUHAgEWJmh0dHA6Ly93d3cuZnJlZXRzYS5vcmcvZnJlZXRzYV9jcHMucGRmMEcG\nCCsGAQUFBwICMDsaOUZyZWVUU0EgdHJ1c3RlZCB0aW1lc3RhbXBpbmcgU29mdHdh\ncmUgYXMgYSBTZXJ2aWNlIChTYWFTKTA3BggrBgEFBQcBAQQrMCkwJwYIKwYBBQUH\nMAGGG2h0dHA6Ly93d3cuZnJlZXRzYS5vcmc6MjU2MDANBgkqhkiG9w0BAQ0FAAOC\nAgEAaK9+v5OFYu9M6ztYC+L69sw1omdyli89lZAfpWMMh9CRmJhM6KBqM/ipwoLt\nnxyxGsbCPhcQjuTvzm+ylN6VwTMmIlVyVSLKYZcdSjt/eCUN+41K7sD7GVmxZBAF\nILnBDmTGJmLkrU0KuuIpj8lI/E6Z6NnmuP2+RAQSHsfBQi6sssnXMo4HOW5gtPO7\ngDrUpVXID++1P4XndkoKn7Svw5n0zS9fv1hxBcYIHPPQUze2u30bAQt0n0iIyRLz\naWuhtpAtd7ffwEbASgzB7E+NGF4tpV37e8KiA2xiGSRqT5ndu28fgpOY87gD3ArZ\nDctZvvTCfHdAS5kEO3gnGGeZEVLDmfEsv8TGJa3AljVa5E40IQDsUXpQLi8G+UC4\n1DWZu8EVT4rnYaCw1VX7ShOR1PNCCvjb8S8tfdudd9zhU3gEB0rxdeTy1tVbNLXW\n99y90xcwr1ZIDUwM/xQ/noO8FRhm0LoPC73Ef+J4ZBdrvWwauF3zJe33d4ibxEcb\n8/pz5WzFkeixYM2nsHhqHsBKw7JPouKNXRnl5IAE1eFmqDyC7G/VT7OF669xM6hb\nUt5G21JE4cNK6NNucS+fzg1JPX0+3VhsYZjj7D5uljRvQXrJ8iHgr/M6j2oLHvTA\nI2MLdq2qjZFDOCXsxBxJpbmLGBx9ow6ZerlUxzws2AWv2pk=\n-----END CERTIFICATE-----\n",
  "rootSha256": "a6379e7cecc05faa3cbf076013d745e327bbbaa38c0b9af22469d4701d18aabc",
@@ -2914,7 +2922,7 @@ const TRUST_FILES = { 'freetsa-cacert.pem': utf8(TRUST.rootPem), 'freetsa-tsa.cr
   function friendlyTime(d) {
     try {
       return d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
-    } catch (e) {
+    } catch (_e) {
       return d.toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC');
     }
   }

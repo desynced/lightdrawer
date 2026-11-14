@@ -41,7 +41,7 @@
   function friendlyTime(d) {
     try {
       return d.toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
-    } catch (e) {
+    } catch (_e) {
       return d.toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC');
     }
   }

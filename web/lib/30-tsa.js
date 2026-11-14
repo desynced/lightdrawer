@@ -17,7 +17,8 @@ function tsaParseResponse(tsr) {
   const ci = resp.children[1];
   if (derOid(ci.children[0]) !== OID.signedData) throw new Error('token is not CMS SignedData');
   const sd = ci.children[1].children[0];
-  let k = 1; const digestAlgs = sd.children[k++]; const encap = sd.children[k++];
+  let k = 2; // [0] version, [1] digestAlgorithms (not needed here)
+  const encap = sd.children[k++];
   let certs = [];
   if (sd.children[k] && sd.children[k].tag === 0xa0) { certs = sd.children[k].children.map((c) => c.raw); k++; }
   if (sd.children[k] && sd.children[k].tag === 0xa1) k++;
@@ -36,13 +37,13 @@ function tsaParseResponse(tsr) {
   for (; j < tst.length; j++) {
     const n = tst[j];
     if (n.tag === 0x02) nonce = derInt(n);
-    else if (n.tag === 0xa0) { try { tsaName = x509Name(n.children[0].children[0]); } catch (e) { /* ignore */ } }
+    else if (n.tag === 0xa0) { try { tsaName = x509Name(n.children[0].children[0]); } catch (_e) { /* ignore */ } }
   }
   const si = signerInfos.children[0].children;
   let s = 1; const sid = si[s++]; const digestAlgOid = derOid(si[s++].children[0]);
   let signedAttrs = null; if (si[s].tag === 0xa0) signedAttrs = si[s++];
   const sigAlgOid = derOid(si[s++].children[0]);
-  const signature = si[s++].content;
+  const signature = si[s].content;
   const attrs = {};
   if (signedAttrs) for (const a of signedAttrs.children) attrs[derOid(a.children[0])] = a.children[1].children[0];
   let sidSerialHex = null; if (sid.tag === 0x30) sidSerialHex = toHex(sid.children[1].content).replace(/^00/, '');
@@ -72,7 +73,7 @@ async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
   let signer = null;
   for (const c of candidates) {
     if (bytesEq(c.der, root.der)) continue;
-    try { if (await verifyWithSpki(c.spkiRaw, c.keyAlgOid, c.curveOid, p.sigAlgOid, hashName, p.signature, signedAttrsDer)) { signer = c; break; } } catch (e) { /* try next */ }
+    try { if (await verifyWithSpki(c.spkiRaw, c.keyAlgOid, c.curveOid, p.sigAlgOid, hashName, p.signature, signedAttrsDer)) { signer = c; break; } } catch (_e) { /* try next */ }
   }
   checks.push(chk('tsa.signature', signer ? 'pass' : 'fail', 'TSA signature is valid', signer ? signer.subject : 'no certificate verified the signature'));
   if (signer) {
@@ -86,7 +87,7 @@ async function tsaVerify(tsr, expectedDigest, trust, expectedNonceHex) {
         checks.push(chk('tsa.ess', bytesEq(hashNode.content, await digest(alg, signer.der)) ? 'pass' : 'fail', 'Signed attributes name this signing certificate', ''));
       } catch (e) { checks.push(chk('tsa.ess', 'warn', 'Signing-certificate attribute unreadable', e.message)); }
     }
-    let chainOk = false; try { chainOk = await x509VerifyIssuedBy(signer, root); } catch (e) { /* */ }
+    let chainOk = false; try { chainOk = await x509VerifyIssuedBy(signer, root); } catch (_e) { /* */ }
     checks.push(chk('tsa.chain', chainOk ? 'pass' : 'fail', 'TSA certificate chains to the pinned root', root.subject));
     const inValidity = p.genTime >= signer.notBefore && p.genTime <= signer.notAfter;
     checks.push(chk('tsa.validity', inValidity ? 'pass' : 'fail', 'Timestamp falls inside the TSA certificate validity', `${signer.notBefore.toISOString()} – ${signer.notAfter.toISOString()}`));
