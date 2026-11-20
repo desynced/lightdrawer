@@ -15,10 +15,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "fast-check": "^4.10.2",
     "globals": "^17.14.0",
-    "wrangler": "^4.160.0"
+    "wrangler": "^4.164.0"
   },
   "overrides": {
     "minimatch": "11.0.8"
